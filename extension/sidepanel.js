@@ -2,9 +2,11 @@ const $ = (sel) => document.querySelector(sel);
 
 let currentPrUrl = null;
 let currentSelection = null;
-let currentAssistantEl = null;
-let activeStreamId = null;
 let nextStreamId = 1;
+// streamId → assistant bubble element. Each send gets its own bubble so the
+// user can ask follow-ups before the previous answer finishes streaming
+// without freezing the older bubble in thinking state.
+const activeStreams = new Map();
 
 // Paste collapse: long paste payloads are folded into [Pasted text #N — L lines]
 // placeholders in the textarea, and expanded back on send.
@@ -43,18 +45,18 @@ async function init() {
       renderDiffStatus(msg.status);
     }
     if (msg.type === 'streamChunk') {
-      console.log('[PR Review SP] streamChunk', 'streamId=', msg.streamId, 'active=', activeStreamId, 'delta?', !!msg.delta, 'done?', !!msg.done, 'error?', !!msg.error);
-    }
-    if (msg.type === 'streamChunk' && msg.streamId === activeStreamId) {
-      if (msg.delta != null) appendAssistantDelta(msg.delta);
+      const bubble = activeStreams.get(msg.streamId);
+      console.log('[PR Review SP] streamChunk', 'streamId=', msg.streamId, 'matched=', !!bubble, 'delta?', !!msg.delta, 'done?', !!msg.done, 'error?', !!msg.error);
+      if (!bubble) return;
+      if (msg.delta != null) appendAssistantDelta(bubble, msg.delta);
       else if (msg.done) {
-        finishAssistantMessage();
-        setStatus('');
-        activeStreamId = null;
+        finalizeBubble(bubble);
+        activeStreams.delete(msg.streamId);
+        if (activeStreams.size === 0) setStatus('');
       } else if (msg.error) {
         setStatus(`Claude error: ${msg.error}`, { error: true });
-        finishAssistantMessage();
-        activeStreamId = null;
+        finalizeBubble(bubble);
+        activeStreams.delete(msg.streamId);
       }
     }
   });
@@ -228,22 +230,26 @@ function startAssistantMessage() {
   dots.innerHTML = '<span></span><span></span><span></span>';
   div.appendChild(dots);
   $('#history').appendChild(div);
-  currentAssistantEl = div;
   scrollHistory();
+  return div;
 }
 
-function appendAssistantDelta(text) {
-  if (!currentAssistantEl) startAssistantMessage();
-  if (currentAssistantEl.classList.contains('thinking')) {
-    currentAssistantEl.classList.remove('thinking');
-    currentAssistantEl.textContent = ''; // strip the dots span
+function appendAssistantDelta(bubble, text) {
+  if (bubble.classList.contains('thinking')) {
+    bubble.classList.remove('thinking');
+    bubble.textContent = ''; // strip the dots span
   }
-  currentAssistantEl.textContent += text;
+  bubble.textContent += text;
   scrollHistory();
 }
 
-function finishAssistantMessage() {
-  currentAssistantEl = null;
+function finalizeBubble(bubble) {
+  // If we never got a delta, leave a friendly placeholder instead of an
+  // empty bubble with dots stuck forever.
+  if (bubble.classList.contains('thinking')) {
+    bubble.classList.remove('thinking');
+    bubble.textContent = '(no response)';
+  }
 }
 
 function scrollHistory() {
@@ -254,7 +260,7 @@ function scrollHistory() {
 function clearHistoryUI() {
   const h = $('#history');
   h.innerHTML = '';
-  currentAssistantEl = null;
+  activeStreams.clear();
   renderEmptyState();
 }
 
@@ -338,7 +344,7 @@ async function send() {
   appendUserMessage(userText);
   $('#input').value = '';
   setStatus('Thinking…', { thinking: true });
-  startAssistantMessage();
+  const bubble = startAssistantMessage();
 
   const expandedQuestion = expandPastes(rawQuestion);
   pasteRegistry.clear();
@@ -355,15 +361,16 @@ async function send() {
   currentSelection = null;
   renderContextPreview();
 
-  activeStreamId = nextStreamId++;
-  console.log('[PR Review SP] send', 'streamId=', activeStreamId, 'prUrl=', payload.prUrl, 'q.len=', payload.question?.length);
+  const streamId = nextStreamId++;
+  activeStreams.set(streamId, bubble);
+  console.log('[PR Review SP] send', 'streamId=', streamId, 'prUrl=', payload.prUrl, 'q.len=', payload.question?.length);
   chrome.runtime.sendMessage({
     type: 'send',
-    streamId: activeStreamId,
+    streamId,
     ...payload,
   }).catch((err) => {
     setStatus(`Send failed: ${err?.message || err}`, { error: true });
-    finishAssistantMessage();
-    activeStreamId = null;
+    finalizeBubble(bubble);
+    activeStreams.delete(streamId);
   });
 }
