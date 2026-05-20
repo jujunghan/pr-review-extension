@@ -36,28 +36,48 @@ function ensurePort() {
   });
   port.onDisconnect.addListener(() => {
     const err = chrome.runtime.lastError?.message || 'Native host disconnected';
-    for (const handler of pending.values()) {
-      handler.onError?.(err);
+    // Chrome may exit the host after idle. Any in-flight requests that
+    // haven't started receiving data yet are safe to retry once on a
+    // fresh port; ones already mid-stream surface the error to the user.
+    const toRetry = [];
+    for (const [, handler] of pending) {
+      if (!handler._retried && !handler._sawDelta && handler._req) {
+        handler._retried = true;
+        toRetry.push(handler);
+      } else {
+        handler.onError?.(err);
+      }
     }
     pending.clear();
     port = null;
+    for (const h of toRetry) {
+      nativeSend(h._req, h);
+    }
   });
   return port;
 }
 
-function nativeSend(req, { onDelta, onDone, onError }) {
+function nativeSend(req, callbacks) {
   const p = ensurePort();
   if (!p) {
-    onError?.('Native host not installed. Run: npm run install-host -- --ext-id <id>');
+    callbacks.onError?.('Native host not installed. Run: npm run install-host -- --ext-id <id>');
     return null;
   }
   const id = nextId++;
-  pending.set(id, { onDelta, onDone, onError });
+  const handler = {
+    onDelta: (text) => { handler._sawDelta = true; callbacks.onDelta?.(text); },
+    onDone: callbacks.onDone,
+    onError: callbacks.onError,
+    _req: req,
+    _retried: callbacks._retried || false,
+    _sawDelta: false,
+  };
+  pending.set(id, handler);
   try {
     p.postMessage({ id, ...req });
   } catch (err) {
     pending.delete(id);
-    onError?.(err.message);
+    callbacks.onError?.(err.message);
     port = null;
   }
   return id;
