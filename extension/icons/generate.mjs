@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Generate brand icons (16/48/128) for the Chrome extension using just
-// node stdlib. Modernized design: deep violet → indigo gradient with a
-// soft inner radial highlight, a crisp 5-point star at the center, and
-// supersampled anti-aliasing for smoother edges.
+// node stdlib. Design: white card with a chubby purple 4-point sparkle
+// at center-left plus two satellite sparkles. Anti-aliased rounded
+// corners and polygon edges via 4× supersample.
 //
 // Run from anywhere:  node extension/icons/generate.mjs
 // Outputs:  extension/icons/16.png  extension/icons/48.png  extension/icons/128.png
@@ -44,7 +44,7 @@ function makePng(size, pixelFn) {
   ihdr.writeUInt32BE(size, 0);
   ihdr.writeUInt32BE(size, 4);
   ihdr[8] = 8;
-  ihdr[9] = 6; // RGBA
+  ihdr[9] = 6;
   const raw = Buffer.alloc(size * (1 + size * 4));
   for (let y = 0; y < size; y++) {
     const rowOff = y * (1 + size * 4);
@@ -65,73 +65,54 @@ function makePng(size, pixelFn) {
 }
 
 // ----- Math helpers -----
-function lerp(a, b, t) { return a + (b - a) * t; }
-function clamp01(v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
-function blendOver(base, top, alpha) {
-  return [
-    Math.round(lerp(base[0], top[0], alpha)),
-    Math.round(lerp(base[1], top[1], alpha)),
-    Math.round(lerp(base[2], top[2], alpha)),
-    255,
-  ];
-}
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp01 = (v) => v < 0 ? 0 : (v > 1 ? 1 : v);
+const blend = (b, t, a) => [
+  Math.round(lerp(b[0], t[0], a)),
+  Math.round(lerp(b[1], t[1], a)),
+  Math.round(lerp(b[2], t[2], a)),
+  255,
+];
 
 // ----- Shapes -----
 function inRoundedRectAlpha(x, y, size) {
-  // Anti-aliased rounded square coverage: distance from corner radius.
   const r = size * 0.24;
   const cx = Math.min(Math.max(x, r), size - r);
   const cy = Math.min(Math.max(y, r), size - r);
-  const dx = x - cx;
-  const dy = y - cy;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  if (dist <= r - 0.5) return 1;
-  if (dist >= r + 0.5) return 0;
-  return r + 0.5 - dist;
+  const d = Math.hypot(x - cx, y - cy);
+  if (d <= r - 0.5) return 1;
+  if (d >= r + 0.5) return 0;
+  return r + 0.5 - d;
 }
 
-function bgGradient(x, y, size) {
-  // Diagonal violet → indigo with subtle radial top-left highlight.
-  const t = clamp01((x + y) / (2 * (size - 1)));
-  // Deep indigo 4F46E5 → vivid violet 7C3AED → midnight 312E81
-  let r, g, b;
-  if (t < 0.5) {
-    const u = t / 0.5;
-    r = lerp(0x4F, 0x7C, u);
-    g = lerp(0x46, 0x3A, u);
-    b = lerp(0xE5, 0xED, u);
-  } else {
-    const u = (t - 0.5) / 0.5;
-    r = lerp(0x7C, 0x31, u);
-    g = lerp(0x3A, 0x2E, u);
-    b = lerp(0xED, 0x81, u);
-  }
-  // Radial top-left lighten so the surface feels lit
-  const cx = size * 0.28;
-  const cy = size * 0.24;
-  const d = Math.hypot(x - cx, y - cy) / size;
-  const light = Math.max(0, 1 - d * 1.8) * 0.22;
+// White card with a near-imperceptible vertical wash for depth.
+function bgWhite(x, y, size) {
+  const t = clamp01(y / (size - 1));
+  return [Math.round(lerp(255, 250, t)), Math.round(lerp(255, 250, t)), Math.round(lerp(255, 254, t)), 255];
+}
+
+// Brand violet gradient that fills inside the sparkle (top→bottom).
+function purpleInside(x, y, size) {
+  const t = clamp01(y / (size - 1));
   return [
-    Math.round(Math.min(255, r + light * 255)),
-    Math.round(Math.min(255, g + light * 255)),
-    Math.round(Math.min(255, b + light * 255)),
+    Math.round(lerp(0x5B, 0x7C, t)),
+    Math.round(lerp(0x5B, 0x3A, t)),
+    Math.round(lerp(0xD6, 0xED, t)),
     255,
   ];
 }
 
-// 5-point star polygon coverage (with optional fractional AA via super-sample)
-function makeStarPolygon(size) {
-  const cx = size / 2;
-  const cy = size / 2 + size * 0.02;
-  const outerR = size * 0.30;
-  const innerR = outerR * 0.40;
-  const verts = [];
-  for (let i = 0; i < 10; i++) {
-    const ang = -Math.PI / 2 + (i * Math.PI / 5);
-    const r = i % 2 === 0 ? outerR : innerR;
-    verts.push([cx + r * Math.cos(ang), cy + r * Math.sin(ang)]);
-  }
-  return verts;
+function sparkleVerts(cx, cy, height, width, inner) {
+  return [
+    [cx, cy - height],
+    [cx + inner, cy - inner],
+    [cx + width, cy],
+    [cx + inner, cy + inner],
+    [cx, cy + height],
+    [cx - inner, cy + inner],
+    [cx - width, cy],
+    [cx - inner, cy - inner],
+  ];
 }
 
 function pointInPolygon(x, y, verts) {
@@ -146,8 +127,7 @@ function pointInPolygon(x, y, verts) {
   return inside;
 }
 
-function starCoverage(x, y, verts) {
-  // 4x supersample for soft star edges
+function polyCoverage(x, y, verts) {
   let hits = 0;
   for (let sy = 0; sy < 2; sy++) {
     for (let sx = 0; sx < 2; sx++) {
@@ -159,30 +139,23 @@ function starCoverage(x, y, verts) {
   return hits / 4;
 }
 
-function pixel(x, y, size, starVerts) {
+function pixel(x, y, size) {
   const mask = inRoundedRectAlpha(x, y, size);
   if (mask <= 0) return [0, 0, 0, 0];
-  const bg = bgGradient(x, y, size);
-  const starAlpha = starCoverage(x, y, starVerts);
+  const bg = bgWhite(x, y, size);
+  // Main sparkle (center-left, slightly low) + two satellites
+  const v1 = sparkleVerts(size * 0.42, size * 0.55, size * 0.32, size * 0.24, size * 0.09);
+  const v2 = sparkleVerts(size * 0.78, size * 0.26, size * 0.13, size * 0.10, size * 0.035);
+  const v3 = sparkleVerts(size * 0.82, size * 0.78, size * 0.09, size * 0.07, size * 0.025);
+  const a = Math.max(polyCoverage(x, y, v1), polyCoverage(x, y, v2), polyCoverage(x, y, v3));
   let color = bg;
-  if (starAlpha > 0) {
-    // White star with a very faint warm tint near the top for premium feel
-    const cx = size / 2, cy = size / 2;
-    const dy = (y - cy) / size;
-    const tint = dy < 0 ? clamp01(-dy * 1.5) : 0;
-    const star = [255, 255 - tint * 8, 255 - tint * 24, 255];
-    color = blendOver(bg, star, starAlpha);
-  }
-  if (mask < 1) {
-    return [color[0], color[1], color[2], Math.round(mask * 255)];
-  }
-  return color;
+  if (a > 0) color = blend(bg, purpleInside(x, y, size), a);
+  return mask < 1 ? [color[0], color[1], color[2], Math.round(mask * 255)] : color;
 }
 
 // ----- Emit -----
 for (const size of [16, 48, 128]) {
-  const verts = makeStarPolygon(size);
-  const buf = makePng(size, (x, y) => pixel(x, y, size, verts));
+  const buf = makePng(size, (x, y) => pixel(x, y, size));
   const out = join(here, `${size}.png`);
   writeFileSync(out, buf);
   console.log(`wrote ${out} (${buf.length} bytes)`);
