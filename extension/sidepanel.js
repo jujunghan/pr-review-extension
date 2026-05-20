@@ -92,19 +92,24 @@ function setPrUrl(url) {
 }
 
 async function refreshRepoPathBanner(prUrl) {
-  let el = document.getElementById('repo-path-banner');
   if (!prUrl) {
-    if (el) el.remove();
+    document.querySelectorAll('#repo-path-banner').forEach((n) => n.remove());
     return;
   }
-  const res = await chrome.runtime.sendMessage({ type: 'getRepoPath', prUrl });
-  const path = res?.path;
+  // Guarantee a single element synchronously, BEFORE awaiting the
+  // background round-trip. Concurrent calls (init + prUrlChanged) would
+  // otherwise each create their own banner.
+  let el = document.getElementById('repo-path-banner');
   if (!el) {
     el = document.createElement('div');
     el.id = 'repo-path-banner';
     el.className = 'repo-path-banner';
     document.getElementById('header').insertAdjacentElement('afterend', el);
   }
+  // Sweep any stale duplicates left over from previous race conditions.
+  document.querySelectorAll('#repo-path-banner').forEach((n) => { if (n !== el) n.remove(); });
+  const res = await chrome.runtime.sendMessage({ type: 'getRepoPath', prUrl });
+  const path = res?.path;
   el.innerHTML = '';
   if (path) {
     const span = document.createElement('span');
