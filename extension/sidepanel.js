@@ -22,6 +22,7 @@ async function init() {
   if (state?.prUrl) {
     const ds = await chrome.runtime.sendMessage({ type: 'getDiffStatus', prUrl: state.prUrl });
     renderDiffStatus(ds?.status);
+    refreshRepoPathBanner(state.prUrl);
   }
 
   chrome.runtime.onMessage.addListener((msg) => {
@@ -29,6 +30,7 @@ async function init() {
       const changed = currentPrUrl !== msg.prUrl;
       setPrUrl(msg.prUrl);
       if (changed) clearHistoryUI();
+      refreshRepoPathBanner(msg.prUrl);
     }
     if (msg.type === 'selectionChanged') {
       currentSelection = { file: msg.file, lines: msg.lines, text: msg.text };
@@ -87,6 +89,64 @@ function setPrUrl(url) {
   const label = $('#pr-label');
   label.textContent = url ? prShortLabel(url) : 'No PR detected';
   label.classList.toggle('has-pr', !!url);
+}
+
+async function refreshRepoPathBanner(prUrl) {
+  let el = document.getElementById('repo-path-banner');
+  if (!prUrl) {
+    if (el) el.remove();
+    return;
+  }
+  const res = await chrome.runtime.sendMessage({ type: 'getRepoPath', prUrl });
+  const path = res?.path;
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'repo-path-banner';
+    el.className = 'repo-path-banner';
+    document.getElementById('header').insertAdjacentElement('afterend', el);
+  }
+  el.innerHTML = '';
+  if (path) {
+    const span = document.createElement('span');
+    span.className = 'repo-path-text';
+    span.textContent = `📁 ${path}`;
+    const change = document.createElement('button');
+    change.type = 'button';
+    change.className = 'repo-path-edit';
+    change.textContent = 'change';
+    change.title = 'Change local repo path';
+    change.addEventListener('click', () => promptRepoPath(prUrl, path));
+    el.appendChild(span);
+    el.appendChild(change);
+    el.dataset.state = 'set';
+  } else {
+    const span = document.createElement('span');
+    span.className = 'repo-path-text';
+    span.textContent = '⚠︎ No local repo path set — Claude can\'t read your files';
+    const setBtn = document.createElement('button');
+    setBtn.type = 'button';
+    setBtn.className = 'repo-path-edit';
+    setBtn.textContent = 'set path';
+    setBtn.addEventListener('click', () => promptRepoPath(prUrl, ''));
+    el.appendChild(span);
+    el.appendChild(setBtn);
+    el.dataset.state = 'unset';
+  }
+}
+
+async function promptRepoPath(prUrl, current) {
+  const m = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/\d+/);
+  const label = m ? `${m[1]}/${m[2]}` : prUrl;
+  const suggested = current || (m ? `~/Projects/${m[2]}` : '');
+  const input = window.prompt(
+    `Local absolute path for ${label}:`,
+    suggested,
+  );
+  if (input == null) return;
+  const trimmed = input.trim();
+  if (!trimmed) return;
+  await chrome.runtime.sendMessage({ type: 'setRepoPath', prUrl, path: trimmed });
+  refreshRepoPathBanner(prUrl);
 }
 
 function renderDiffStatus(status) {
@@ -265,28 +325,6 @@ async function send() {
   if (currentSelection && currentSelection.text.split('\n').length > 500) {
     const ok = confirm(`Selection is ${currentSelection.text.split('\n').length} lines. Send anyway?`);
     if (!ok) { setStatus('Cancelled.'); return; }
-  }
-
-  // Ensure we know the local repo path so claude spawns in the right cwd.
-  const pathState = await chrome.runtime.sendMessage({ type: 'getRepoPath', prUrl: currentPrUrl });
-  if (!pathState?.path) {
-    const m = currentPrUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/\d+/);
-    const label = m ? `${m[1]}/${m[2]}` : currentPrUrl;
-    const suggested = m ? `${m[2]}` : '';
-    const input = prompt(
-      `Local repo path for ${label} (absolute path to the working copy on disk):`,
-      suggested ? `~/Projects/${suggested}` : '',
-    );
-    if (!input?.trim()) { setStatus('Local repo path required.', { error: true }); return; }
-    let pathValue = input.trim();
-    if (pathValue.startsWith('~/')) {
-      // chrome storage gets a literal string — expand ~ only as a hint in UI;
-      // host.js will pass it through to spawn which respects the literal path.
-      // We leave ~/ as-is on purpose; users on macOS/Linux usually paste an
-      // absolute path from `pwd`.
-    }
-    const setRes = await chrome.runtime.sendMessage({ type: 'setRepoPath', prUrl: currentPrUrl, path: pathValue });
-    if (!setRes?.ok) { setStatus(`Could not save path: ${setRes?.error || 'unknown'}`, { error: true }); return; }
   }
 
   const userText = currentSelection
