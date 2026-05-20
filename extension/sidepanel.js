@@ -59,7 +59,10 @@ async function init() {
 
   const input = $('#input');
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // e.isComposing covers the IME confirm Enter (Korean/Japanese/Chinese)
+    // that would otherwise trigger send() multiple times for a single
+    // user Enter press. keyCode 229 is the legacy IME signal.
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
       send();
     }
