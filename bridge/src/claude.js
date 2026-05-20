@@ -1,5 +1,13 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { homedir } from 'node:os';
+
+function expandTilde(p) {
+  if (!p) return p;
+  if (p === '~') return homedir();
+  if (p.startsWith('~/')) return homedir() + p.slice(1);
+  return p;
+}
 
 export async function parseStream(readable, emitter) {
   if (emitter.listenerCount('error') === 0) {
@@ -48,7 +56,7 @@ export function runClaude({ sessionId, isNew, message, cwd }) {
   delete env.CMUX_WORKSPACE_ID;
   delete env.CMUX_TAB_ID;
   return spawn('claude', args, {
-    cwd: cwd || process.cwd(),
+    cwd: expandTilde(cwd) || process.cwd(),
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

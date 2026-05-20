@@ -171,10 +171,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
       return;
     }
+    if (msg.type === 'getRepoPath') {
+      const path = await lookupRepoPath(msg.prUrl);
+      sendResponse({ path });
+      return;
+    }
+    if (msg.type === 'setRepoPath') {
+      const key = repoKey(msg.prUrl);
+      if (!key) { sendResponse({ ok: false, error: 'invalid prUrl' }); return; }
+      const data = await chrome.storage.local.get('repoPaths');
+      const map = data.repoPaths || {};
+      map[key] = msg.path;
+      await chrome.storage.local.set({ repoPaths: map });
+      sendResponse({ ok: true });
+      return;
+    }
     if (msg.type === 'send') {
       // streaming send: the sender supplies a streamId so we route deltas
       // back via broadcast (sidepanel) or tab message (content script).
       const { streamId, target, prUrl, file, lines, code, question } = msg;
+      const cwd = await lookupRepoPath(prUrl);
       const replyTo = (payload) => {
         const kind = payload.delta != null ? 'delta' : (payload.done ? 'done' : (payload.error ? 'error' : '?'));
         console.log('[PR Review BG] replyTo', target || 'broadcast', 'streamId=', streamId, kind, payload.delta?.length || '');
@@ -195,7 +211,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         diffAttached.add(prUrl);
       }
 
-      nativeSend({ type: 'send', prUrl, file, lines, code, question: finalQuestion }, {
+      nativeSend({ type: 'send', prUrl, file, lines, code, question: finalQuestion, cwd }, {
         onDelta: (text) => replyTo({ delta: text }),
         onDone: (sessionId) => replyTo({ done: true, sessionId }),
         onError: (message) => replyTo({ error: message }),
@@ -210,6 +226,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 function broadcast(msg) {
   chrome.runtime.sendMessage(msg).catch(() => {});
+}
+
+function repoKey(prUrl) {
+  if (!prUrl) return null;
+  const m = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+async function lookupRepoPath(prUrl) {
+  const key = repoKey(prUrl);
+  if (!key) return null;
+  const data = await chrome.storage.local.get('repoPaths');
+  return data.repoPaths?.[key] || null;
 }
 
 function ingestDiff(prUrl, diff) {

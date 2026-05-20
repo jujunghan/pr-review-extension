@@ -267,6 +267,28 @@ async function send() {
     if (!ok) { setStatus('Cancelled.'); return; }
   }
 
+  // Ensure we know the local repo path so claude spawns in the right cwd.
+  const pathState = await chrome.runtime.sendMessage({ type: 'getRepoPath', prUrl: currentPrUrl });
+  if (!pathState?.path) {
+    const m = currentPrUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/\d+/);
+    const label = m ? `${m[1]}/${m[2]}` : currentPrUrl;
+    const suggested = m ? `${m[2]}` : '';
+    const input = prompt(
+      `Local repo path for ${label} (absolute path to the working copy on disk):`,
+      suggested ? `~/Projects/${suggested}` : '',
+    );
+    if (!input?.trim()) { setStatus('Local repo path required.', { error: true }); return; }
+    let pathValue = input.trim();
+    if (pathValue.startsWith('~/')) {
+      // chrome storage gets a literal string — expand ~ only as a hint in UI;
+      // host.js will pass it through to spawn which respects the literal path.
+      // We leave ~/ as-is on purpose; users on macOS/Linux usually paste an
+      // absolute path from `pwd`.
+    }
+    const setRes = await chrome.runtime.sendMessage({ type: 'setRepoPath', prUrl: currentPrUrl, path: pathValue });
+    if (!setRes?.ok) { setStatus(`Could not save path: ${setRes?.error || 'unknown'}`, { error: true }); return; }
+  }
+
   const userText = currentSelection
     ? `[${currentSelection.file || 'selection'}${currentSelection.lines ? `:${currentSelection.lines}` : ''}]\n\n${rawQuestion}`
     : rawQuestion;
