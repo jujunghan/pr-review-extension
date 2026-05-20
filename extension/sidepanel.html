@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>PR Review</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header id="header">
+    <span id="pr-label">No PR detected</span>
+    <button id="clear-btn" title="Clear conversation context">Clear</button>
+  </header>
+  <main id="history" aria-live="polite"></main>
+  <footer>
+    <div id="context-preview" hidden></div>
+    <textarea id="input" placeholder="Select code in the PR, then ask a question. Enter to send." rows="3"></textarea>
+    <div id="status"></div>
+  </footer>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
