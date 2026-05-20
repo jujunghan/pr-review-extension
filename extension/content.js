@@ -319,12 +319,22 @@
     btn.style.display = 'inline-flex';
     const btnW = btn.offsetWidth || 110;
     const btnH = btn.offsetHeight || 28;
-    const gap = 6;
-    let top = rect.top + window.scrollY - btnH - gap;
-    if (rect.top < btnH + gap) {
-      top = rect.bottom + window.scrollY + gap;
+    const gap = 8;
+    // Default: right-outside the card, aligned to its top — unambiguously
+    // outside the box. Fallback above (or below) only if the viewport
+    // doesn't have horizontal room.
+    const vpRight = window.scrollX + document.documentElement.clientWidth;
+    let top, left;
+    const rightCandidate = rect.right + window.scrollX + gap;
+    if (rightCandidate + btnW + gap <= vpRight) {
+      left = rightCandidate;
+      top = rect.top + window.scrollY;
+    } else {
+      // No room on the right: try above, else below
+      left = Math.max(window.scrollX + gap, rect.right + window.scrollX - btnW);
+      top = rect.top + window.scrollY - btnH - gap;
+      if (rect.top < btnH + gap) top = rect.bottom + window.scrollY + gap;
     }
-    const left = rect.right + window.scrollX - btnW;
     btn.style.top = `${Math.max(0, top)}px`;
     btn.style.left = `${Math.max(0, left)}px`;
     ghostFloaterTarget = textarea;
