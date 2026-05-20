@@ -159,6 +159,24 @@ body {
   outline-offset: 1px;
 }
 
+/* ============ Diff status banner ============ */
+.diff-status {
+  padding: 6px 14px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--surface);
+}
+.diff-status[data-state="ok"] {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+.diff-status[data-state="warn"] {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
 /* ============ History ============ */
 #history {
   flex: 1;

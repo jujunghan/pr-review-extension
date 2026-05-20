@@ -19,6 +19,10 @@ init();
 async function init() {
   const state = await chrome.runtime.sendMessage({ type: 'getState' });
   setPrUrl(state?.prUrl || null);
+  if (state?.prUrl) {
+    const ds = await chrome.runtime.sendMessage({ type: 'getDiffStatus', prUrl: state.prUrl });
+    renderDiffStatus(ds?.status);
+  }
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'prUrlChanged') {
@@ -32,6 +36,9 @@ async function init() {
     }
     if (msg.type === 'focusInput') {
       $('#input').focus();
+    }
+    if (msg.type === 'diffStatus') {
+      renderDiffStatus(msg.status);
     }
     if (msg.type === 'streamChunk' && msg.streamId === activeStreamId) {
       if (msg.delta != null) appendAssistantDelta(msg.delta);
@@ -74,6 +81,30 @@ function setPrUrl(url) {
   const label = $('#pr-label');
   label.textContent = url ? prShortLabel(url) : 'No PR detected';
   label.classList.toggle('has-pr', !!url);
+}
+
+function renderDiffStatus(status) {
+  let el = document.getElementById('diff-status');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'diff-status';
+    el.className = 'diff-status';
+    document.getElementById('header').insertAdjacentElement('afterend', el);
+  }
+  if (!status) {
+    el.textContent = 'Loading PR diff…';
+    el.dataset.state = 'loading';
+    return;
+  }
+  if (status.skipped === 'too-large') {
+    el.textContent = `PR too large to auto-attach (${status.lines.toLocaleString()} lines / ${(status.bytes / 1024).toFixed(0)} KB). Select specific hunks to ask about.`;
+    el.dataset.state = 'warn';
+    return;
+  }
+  if (status.ready) {
+    el.textContent = `PR diff loaded — ${status.lines.toLocaleString()} lines (${(status.bytes / 1024).toFixed(0)} KB) ready as context`;
+    el.dataset.state = 'ok';
+  }
 }
 
 function prShortLabel(url) {
