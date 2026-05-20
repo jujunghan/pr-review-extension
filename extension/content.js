@@ -286,17 +286,36 @@
     return btn;
   }
 
+  // GitHub's review-comment dialog wraps the textarea in a card whose
+  // toolbar + header live above the textarea but inside the same visual
+  // box. Anchoring to textarea.rect therefore puts the button inside the
+  // box. Walk up to the outermost ancestor that's still narrower than
+  // the viewport — that's the visible card — and anchor to its top edge.
+  function findOuterCard(textarea) {
+    let cur = textarea;
+    let last = textarea;
+    const stop = document.body;
+    let depth = 0;
+    while (cur && cur !== stop && depth < 12) {
+      const r = cur.getBoundingClientRect();
+      if (r.width > window.innerWidth * 0.9) break;
+      if (r.width === 0 || r.height === 0) break;
+      last = cur;
+      cur = cur.parentElement;
+      depth++;
+    }
+    return last;
+  }
+
   function showGhostFloaterFor(textarea) {
     const btn = buildGhostFloater();
-    const rect = textarea.getBoundingClientRect();
+    const card = findOuterCard(textarea);
+    const rect = card.getBoundingClientRect();
     if (rect.width === 0 && rect.height === 0) {
       btn.style.display = 'none';
       ghostFloaterTarget = null;
       return;
     }
-    // Always float above the textarea (outside the box), right-aligned to
-    // the textarea's right edge. If the textarea hugs the top of the
-    // viewport so there isn't room above, drop just below it instead.
     btn.style.display = 'inline-flex';
     const btnW = btn.offsetWidth || 110;
     const btnH = btn.offsetHeight || 28;
