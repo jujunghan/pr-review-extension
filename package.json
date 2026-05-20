@@ -5,6 +5,6 @@
   "workspaces": ["bridge"],
   "scripts": {
     "bridge:start": "node bridge/index.js",
-    "bridge:test": "node --test bridge/test/"
+    "bridge:test": "node --test 'bridge/test/**/*.test.js'"
   }
 }
