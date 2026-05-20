@@ -87,10 +87,19 @@
     prefetched.add(prUrl);
     try {
       const res = await fetch(`${prUrl}.diff`, { credentials: 'include' });
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.warn('[PR Review] diff fetch returned', res.status, 'for', prUrl);
+        prefetched.delete(prUrl);
+        return;
+      }
       const diff = await res.text();
-      chrome.runtime.sendMessage({ type: 'cacheDiff', prUrl, diff }).catch(() => {});
-    } catch {}
+      chrome.runtime.sendMessage({ type: 'cacheDiff', prUrl, diff }).catch((err) => {
+        console.warn('[PR Review] cacheDiff sendMessage failed:', err?.message || err);
+      });
+    } catch (err) {
+      console.warn('[PR Review] diff prefetch failed for', prUrl, err?.message || err);
+      prefetched.delete(prUrl);
+    }
   }
 
   function reportUrl() {
