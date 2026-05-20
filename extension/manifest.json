@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "description": "Send selected PR code to Claude Code and chat in a side panel.",
   "permissions": ["sidePanel", "activeTab", "nativeMessaging"],
-  "host_permissions": ["https://github.com/*"],
+  "host_permissions": [
+    "https://github.com/*",
+    "https://patch-diff.githubusercontent.com/*"
+  ],
   "background": { "service_worker": "background.js", "type": "module" },
   "side_panel": { "default_path": "sidepanel.html" },
   "content_scripts": [
