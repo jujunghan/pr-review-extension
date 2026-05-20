@@ -64,15 +64,20 @@
     clearTimeout(timer);
     timer = setTimeout(() => {
       const cap = captureSelection();
-      if (!cap) return;
+      if (!cap) {
+        hideFloatingAction();
+        return;
+      }
       const key = `${cap.file}|${cap.lines}|${cap.text}`;
-      if (key === lastSent) return;
-      lastSent = key;
-      chrome.runtime.sendMessage({
-        type: 'selectionChanged',
-        prUrl: getPrUrl(),
-        ...cap,
-      }).catch(() => {});
+      if (key !== lastSent) {
+        lastSent = key;
+        chrome.runtime.sendMessage({
+          type: 'selectionChanged',
+          prUrl: getPrUrl(),
+          ...cap,
+        }).catch(() => {});
+      }
+      showFloatingAction(cap);
     }, SEND_DEBOUNCE_MS);
   });
 
@@ -86,6 +91,102 @@
   history.pushState = function (...args) { origPush.apply(this, args); reportUrl(); };
   history.replaceState = function (...args) { origReplace.apply(this, args); reportUrl(); };
   window.addEventListener('popstate', reportUrl);
+
+  // ============ Floating action on selection (A1) ============
+  let floatingBtn = null;
+  let lastSelectionForAction = null;
+
+  function ensureFloatingBtn() {
+    if (floatingBtn) return floatingBtn;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('aria-label', 'Ask Claude about selection');
+    btn.title = 'Ask Claude about this selection';
+    btn.textContent = '✨';
+    Object.assign(btn.style, {
+      position: 'absolute',
+      width: '28px',
+      height: '28px',
+      padding: '0',
+      display: 'none',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'linear-gradient(135deg, #5b5bd6 0%, #4f46e5 100%)',
+      color: '#fff',
+      border: '1px solid rgba(0,0,0,0.08)',
+      borderRadius: '8px',
+      cursor: 'pointer',
+      fontSize: '14px',
+      lineHeight: '1',
+      boxShadow: '0 2px 8px rgba(79, 70, 229, 0.35)',
+      zIndex: '2147483646',
+      userSelect: 'none',
+      transition: 'transform 100ms ease, opacity 100ms ease',
+    });
+    btn.addEventListener('mousedown', (e) => {
+      // Prevent click from collapsing the active selection
+      e.preventDefault();
+    });
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onFloatingClick();
+    });
+    document.documentElement.appendChild(btn);
+    floatingBtn = btn;
+    return btn;
+  }
+
+  function showFloatingAction(cap) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (!cap.file) return; // Only show inside diff files
+    const rect = range.getBoundingClientRect();
+    if (!rect || (rect.width === 0 && rect.height === 0)) return;
+
+    const btn = ensureFloatingBtn();
+    const margin = 8;
+    let left = rect.right + window.scrollX + margin;
+    let top = rect.top + window.scrollY - 4;
+    // Clamp to viewport horizontally — fall back to left side if too tight
+    const vpRight = window.scrollX + document.documentElement.clientWidth;
+    if (left + 28 + margin > vpRight) {
+      left = Math.max(window.scrollX + margin, rect.left + window.scrollX - 28 - margin);
+    }
+    btn.style.display = 'inline-flex';
+    btn.style.left = `${Math.max(0, left)}px`;
+    btn.style.top = `${Math.max(0, top)}px`;
+    lastSelectionForAction = cap;
+  }
+
+  function hideFloatingAction() {
+    if (floatingBtn) floatingBtn.style.display = 'none';
+    lastSelectionForAction = null;
+  }
+
+  function onFloatingClick() {
+    if (!lastSelectionForAction) return;
+    chrome.runtime.sendMessage({
+      type: 'openSidePanelWithSelection',
+      prUrl: getPrUrl(),
+      ...lastSelectionForAction,
+    }).catch(() => {});
+    hideFloatingAction();
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideFloatingAction();
+  });
+  document.addEventListener('mousedown', (e) => {
+    if (floatingBtn && e.target !== floatingBtn) {
+      // Hide on outside click; selectionchange will re-show if a new selection is made
+      hideFloatingAction();
+    }
+  }, true);
+  window.addEventListener('scroll', () => {
+    if (lastSelectionForAction) showFloatingAction(lastSelectionForAction);
+  }, true);
 
   // ============ Review comment ghostwrite ============
   const BRIDGE = 'http://localhost:8765';

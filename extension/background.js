@@ -33,6 +33,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
       return;
     }
+    if (msg.type === 'openSidePanelWithSelection') {
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        try { await chrome.sidePanel.open({ tabId }); } catch {}
+      }
+      broadcastToSidePanel({
+        type: 'selectionChanged',
+        prUrl: msg.prUrl,
+        file: msg.file,
+        lines: msg.lines,
+        text: msg.text,
+      });
+      broadcastToSidePanel({ type: 'focusInput' });
+      sendResponse({ ok: true });
+      return;
+    }
     sendResponse({ ok: false, error: 'unknown message' });
   })();
   return true;
