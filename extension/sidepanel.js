@@ -40,6 +40,9 @@ async function init() {
     if (msg.type === 'diffStatus') {
       renderDiffStatus(msg.status);
     }
+    if (msg.type === 'streamChunk') {
+      console.log('[PR Review SP] streamChunk', 'streamId=', msg.streamId, 'active=', activeStreamId, 'delta?', !!msg.delta, 'done?', !!msg.done, 'error?', !!msg.error);
+    }
     if (msg.type === 'streamChunk' && msg.streamId === activeStreamId) {
       if (msg.delta != null) appendAssistantDelta(msg.delta);
       else if (msg.done) {
@@ -278,6 +281,7 @@ async function send() {
   renderContextPreview();
 
   activeStreamId = nextStreamId++;
+  console.log('[PR Review SP] send', 'streamId=', activeStreamId, 'prUrl=', payload.prUrl, 'q.len=', payload.question?.length);
   chrome.runtime.sendMessage({
     type: 'send',
     streamId: activeStreamId,
