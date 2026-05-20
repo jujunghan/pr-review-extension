@@ -7,14 +7,51 @@
 </head>
 <body>
   <header id="header">
-    <span id="pr-label">No PR detected</span>
-    <button id="clear-btn" title="Clear conversation context">Clear</button>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">PR Review</span>
+    </div>
+    <span id="pr-label" class="pr-label">No PR detected</span>
+    <button id="clear-btn" class="icon-btn" title="Clear conversation context" aria-label="Clear">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        <path fill="currentColor" d="M5.5 1a.5.5 0 0 0-.5.5V2H2.5a.5.5 0 0 0 0 1H3v9.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V3h.5a.5.5 0 0 0 0-1H11v-.5a.5.5 0 0 0-.5-.5h-5zM4 3h8v9.5a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5V3zm2 2a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-1 0v-5A.5.5 0 0 1 6 5zm2 0a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-1 0v-5A.5.5 0 0 1 8 5zm2 0a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-1 0v-5A.5.5 0 0 1 10 5z" />
+      </svg>
+    </button>
   </header>
-  <main id="history" aria-live="polite"></main>
+
+  <main id="history" aria-live="polite">
+    <div id="empty-state" class="empty-state">
+      <div class="empty-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="36" height="36">
+          <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+            d="M4 6h16M4 12h10M4 18h7M16 14l3 3-3 3M16 14v6" />
+        </svg>
+      </div>
+      <p class="empty-title">Ask Claude about this PR</p>
+      <ol class="empty-steps">
+        <li>Open a GitHub PR diff page</li>
+        <li>Select a hunk in the diff</li>
+        <li>Ask your question below</li>
+      </ol>
+    </div>
+  </main>
+
   <footer>
-    <div id="context-preview" hidden></div>
-    <textarea id="input" placeholder="Select code in the PR, then ask a question. Enter to send." rows="3"></textarea>
-    <div id="status"></div>
+    <div id="context-preview" class="context-preview" hidden>
+      <div class="context-header">
+        <span class="context-label" id="context-header-text">Selection</span>
+        <button id="context-dismiss" class="context-dismiss" aria-label="Remove selection">×</button>
+      </div>
+      <pre id="context-body" class="context-body"></pre>
+    </div>
+    <div class="input-wrap">
+      <textarea
+        id="input"
+        placeholder="Select code, then ask a question. Enter to send."
+        rows="3"
+      ></textarea>
+    </div>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
   </footer>
   <script type="module" src="sidepanel.js"></script>
 </body>
