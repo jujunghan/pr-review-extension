@@ -294,21 +294,18 @@
       ghostFloaterTarget = null;
       return;
     }
-    // Sit clearly outside the textarea's right edge with a gap, vertically
-    // aligned with its top. Falls back above the textarea if there isn't
-    // room on the right.
+    // Always float above the textarea (outside the box), right-aligned to
+    // the textarea's right edge. If the textarea hugs the top of the
+    // viewport so there isn't room above, drop just below it instead.
     btn.style.display = 'inline-flex';
     const btnW = btn.offsetWidth || 110;
     const btnH = btn.offsetHeight || 28;
-    const gap = 8;
-    const vpRight = window.scrollX + document.documentElement.clientWidth;
-    let top = rect.top + window.scrollY;
-    let left = rect.right + window.scrollX + gap;
-    if (left + btnW + gap > vpRight) {
-      // Not enough room to the right — float above the textarea instead.
-      left = Math.max(window.scrollX + gap, rect.right + window.scrollX - btnW);
-      top = rect.top + window.scrollY - btnH - gap;
+    const gap = 6;
+    let top = rect.top + window.scrollY - btnH - gap;
+    if (rect.top < btnH + gap) {
+      top = rect.bottom + window.scrollY + gap;
     }
+    const left = rect.right + window.scrollX - btnW;
     btn.style.top = `${Math.max(0, top)}px`;
     btn.style.left = `${Math.max(0, left)}px`;
     ghostFloaterTarget = textarea;
