@@ -39,10 +39,17 @@ export function runClaude({ sessionId, isNew, message, cwd }) {
   } else {
     args.push('--resume', sessionId);
   }
-  const proc = spawn('claude', args, {
+  args.push(message);
+  const env = { ...process.env };
+  // cmux ships a `claude` wrapper that injects hooks/settings when these
+  // env vars are present. The bridge is an independent process and the
+  // wrapper's hook callbacks can stall/kill the child. Run as if outside cmux.
+  delete env.CMUX_SURFACE_ID;
+  delete env.CMUX_WORKSPACE_ID;
+  delete env.CMUX_TAB_ID;
+  return spawn('claude', args, {
     cwd: cwd || process.cwd(),
-    stdio: ['pipe', 'pipe', 'pipe'],
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
-  proc.stdin.end(message);
-  return proc;
 }
