@@ -157,8 +157,11 @@ function escapeHtml(s) {
 function startAssistantMessage() {
   hideEmptyState();
   const div = document.createElement('div');
-  div.className = 'msg assistant';
-  div.textContent = '';
+  div.className = 'msg assistant thinking';
+  const dots = document.createElement('span');
+  dots.className = 'thinking-dots';
+  dots.innerHTML = '<span></span><span></span><span></span>';
+  div.appendChild(dots);
   $('#history').appendChild(div);
   currentAssistantEl = div;
   scrollHistory();
@@ -166,6 +169,10 @@ function startAssistantMessage() {
 
 function appendAssistantDelta(text) {
   if (!currentAssistantEl) startAssistantMessage();
+  if (currentAssistantEl.classList.contains('thinking')) {
+    currentAssistantEl.classList.remove('thinking');
+    currentAssistantEl.textContent = ''; // strip the dots span
+  }
   currentAssistantEl.textContent += text;
   scrollHistory();
 }
