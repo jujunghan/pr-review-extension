@@ -27,8 +27,12 @@ function ensurePort() {
     return null;
   }
   port.onMessage.addListener((msg) => {
+    console.log('[PR Review BG] port recv', msg.type, 'id=', msg.id, msg.type === 'delta' ? `text.len=${msg.text?.length}` : '');
     const handler = pending.get(msg.id);
-    if (!handler) return;
+    if (!handler) {
+      console.warn('[PR Review BG] no handler for id', msg.id);
+      return;
+    }
     if (msg.type === 'delta') handler.onDelta?.(msg.text);
     else if (msg.type === 'done') { handler.onDone?.(msg.sessionId); pending.delete(msg.id); }
     else if (msg.type === 'error') { handler.onError?.(msg.message); pending.delete(msg.id); }
@@ -36,6 +40,7 @@ function ensurePort() {
   });
   port.onDisconnect.addListener(() => {
     const err = chrome.runtime.lastError?.message || 'Native host disconnected';
+    console.warn('[PR Review BG] port disconnect:', err, 'pending=', pending.size);
     // Chrome may exit the host after idle. Any in-flight requests that
     // haven't started receiving data yet are safe to retry once on a
     // fresh port; ones already mid-stream surface the error to the user.
@@ -73,6 +78,7 @@ function nativeSend(req, callbacks) {
     _sawDelta: false,
   };
   pending.set(id, handler);
+  console.log('[PR Review BG] port send', req.type, 'id=', id, 'prUrl=', req.prUrl, 'q.len=', req.question?.length);
   try {
     p.postMessage({ id, ...req });
   } catch (err) {
@@ -161,6 +167,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // back via broadcast (sidepanel) or tab message (content script).
       const { streamId, target, prUrl, file, lines, code, question } = msg;
       const replyTo = (payload) => {
+        const kind = payload.delta != null ? 'delta' : (payload.done ? 'done' : (payload.error ? 'error' : '?'));
+        console.log('[PR Review BG] replyTo', target || 'broadcast', 'streamId=', streamId, kind, payload.delta?.length || '');
         if (target === 'tab' && sender.tab?.id != null) {
           chrome.tabs.sendMessage(sender.tab.id, { type: 'streamChunk', streamId, ...payload }).catch(() => {});
         } else {
