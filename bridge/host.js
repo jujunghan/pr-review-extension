@@ -82,7 +82,7 @@ function pickFence(code) {
 }
 
 async function handleSend(msg) {
-  const { id, prUrl, file, lines, code, question } = msg;
+  const { id, prUrl, file, lines, code, question, cwd } = msg;
   if (!prUrl || !question) {
     writeMessage({ id, type: 'error', message: 'prUrl and question required' });
     return;
@@ -94,7 +94,7 @@ async function handleSend(msg) {
 
   let proc;
   try {
-    proc = runClaude({ sessionId, isNew, message: formatted });
+    proc = runClaude({ sessionId, isNew, message: formatted, cwd });
   } catch (err) {
     writeMessage({ id, type: 'error', message: err.message });
     return;
