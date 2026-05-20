@@ -204,7 +204,16 @@
 
   // ============ Review comment ghostwrite ============
   const BTN_MARKER = 'data-claude-ghost-btn';
-  const TEXTAREA_SEL = 'textarea[name="comment[body]"], textarea.js-comment-field, textarea[aria-label*="comment" i]';
+  // Covers legacy (name=comment[body]), classic (.js-comment-field), and the
+  // modern React Markdown editor (placeholder="Leave a comment", aria-label).
+  const TEXTAREA_SEL = [
+    'textarea[name="comment[body]"]',
+    'textarea.js-comment-field',
+    'textarea[aria-label*="comment" i]',
+    'textarea[placeholder*="comment" i]',
+    'textarea[placeholder*="reply" i]',
+    'textarea[placeholder*="review" i]',
+  ].join(', ');
   // streamId -> textarea (for routing background streamChunk back)
   const ghostStreams = new Map();
   let nextGhostStreamId = 1;
@@ -235,41 +244,92 @@
     return null;
   }
 
-  function buildGhostButton(textarea) {
+  // Single shared floating button — position is updated to track whichever
+  // textarea has focus. Survives React re-renders that would otherwise
+  // strip an inline-injected button.
+  let ghostFloater = null;
+  let ghostFloaterTarget = null;
+
+  function buildGhostFloater() {
+    if (ghostFloater) return ghostFloater;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.setAttribute(BTN_MARKER, '');
-    btn.textContent = '✨ Claude';
+    btn.textContent = '✨ Ask Claude';
     btn.title = 'Draft this review comment with Claude';
     Object.assign(btn.style, {
-      marginLeft: '6px', padding: '3px 9px', fontSize: '11px', fontWeight: '500',
-      lineHeight: '18px', verticalAlign: 'middle',
-      background: 'linear-gradient(135deg, #5b5bd6 0%, #4f46e5 100%)', color: '#fff',
-      border: '1px solid transparent', borderRadius: '6px', cursor: 'pointer',
-      boxShadow: '0 1px 2px rgba(0,0,0,.08)',
+      position: 'absolute',
+      zIndex: '2147483645',
+      padding: '4px 10px',
+      fontSize: '11.5px',
+      fontWeight: '500',
+      lineHeight: '1.5',
+      background: 'linear-gradient(135deg, #5b5bd6 0%, #4f46e5 100%)',
+      color: '#fff',
+      border: '1px solid rgba(0,0,0,.08)',
+      borderRadius: '6px',
+      cursor: 'pointer',
+      boxShadow: '0 2px 6px rgba(79, 70, 229, 0.3)',
+      display: 'none',
+      userSelect: 'none',
+      transition: 'opacity 100ms ease',
     });
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
     btn.addEventListener('click', (e) => {
       e.preventDefault();
-      runGhostwrite(textarea, btn);
+      e.stopPropagation();
+      if (ghostFloaterTarget) runGhostwrite(ghostFloaterTarget, btn);
     });
+    document.documentElement.appendChild(btn);
+    ghostFloater = btn;
     return btn;
   }
 
-  function attachButton(textarea) {
+  function showGhostFloaterFor(textarea) {
+    const btn = buildGhostFloater();
+    const rect = textarea.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) {
+      btn.style.display = 'none';
+      ghostFloaterTarget = null;
+      return;
+    }
+    const offsetTop = rect.top + window.scrollY - 30;
+    const offsetLeft = rect.right + window.scrollX - 110;
+    btn.style.display = 'inline-flex';
+    btn.style.top = `${Math.max(0, offsetTop)}px`;
+    btn.style.left = `${Math.max(0, offsetLeft)}px`;
+    ghostFloaterTarget = textarea;
+  }
+
+  function hideGhostFloater() {
+    if (ghostFloater) ghostFloater.style.display = 'none';
+    ghostFloaterTarget = null;
+  }
+
+  function wireTextarea(textarea) {
     if (textarea.dataset.claudeGhostWired) return;
     textarea.dataset.claudeGhostWired = '1';
-    const btn = buildGhostButton(textarea);
-    // Try to place next to the existing toolbar near the textarea, else above it.
-    const toolbar = textarea.parentElement?.querySelector('.toolbar, [class*="toolbar"]');
-    if (toolbar) {
-      toolbar.appendChild(btn);
-    } else {
-      const wrap = document.createElement('div');
-      wrap.style.cssText = 'margin: 4px 0;';
-      wrap.appendChild(btn);
-      textarea.parentElement?.insertBefore(wrap, textarea);
-    }
+    textarea.addEventListener('focus', () => showGhostFloaterFor(textarea));
+    textarea.addEventListener('blur', () => {
+      // Defer so the click on the floater can fire first
+      setTimeout(() => {
+        if (document.activeElement !== ghostFloater) hideGhostFloater();
+      }, 200);
+    });
+    // Show immediately if the textarea is already focused at wire time
+    if (document.activeElement === textarea) showGhostFloaterFor(textarea);
   }
+
+  window.addEventListener('scroll', () => {
+    if (ghostFloaterTarget && ghostFloater?.style.display !== 'none') {
+      showGhostFloaterFor(ghostFloaterTarget);
+    }
+  }, true);
+  window.addEventListener('resize', () => {
+    if (ghostFloaterTarget && ghostFloater?.style.display !== 'none') {
+      showGhostFloaterFor(ghostFloaterTarget);
+    }
+  });
 
   function runGhostwrite(textarea, btn) {
     const prUrl = getPrUrl();
@@ -328,7 +388,7 @@
   function scanForTextareas(root) {
     const nodes = root.querySelectorAll?.(TEXTAREA_SEL);
     if (!nodes) return;
-    for (const t of nodes) attachButton(t);
+    for (const t of nodes) wireTextarea(t);
   }
 
   scanForTextareas(document);
@@ -336,7 +396,7 @@
     for (const m of mutations) {
       for (const node of m.addedNodes) {
         if (node.nodeType !== 1) continue;
-        if (node.matches?.(TEXTAREA_SEL)) attachButton(node);
+        if (node.matches?.(TEXTAREA_SEL)) wireTextarea(node);
         scanForTextareas(node);
       }
     }
