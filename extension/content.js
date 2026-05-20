@@ -81,13 +81,6 @@
     }, SEND_DEBOUNCE_MS);
   });
 
-  function reportUrl() {
-    const url = getPrUrl();
-    chrome.runtime.sendMessage({ type: 'prUrlChanged', prUrl: url }).catch(() => {});
-    if (url) prefetchDiff(url);
-  }
-  reportUrl();
-
   const prefetched = new Set();
   async function prefetchDiff(prUrl) {
     if (prefetched.has(prUrl)) return;
@@ -99,6 +92,13 @@
       chrome.runtime.sendMessage({ type: 'cacheDiff', prUrl, diff }).catch(() => {});
     } catch {}
   }
+
+  function reportUrl() {
+    const url = getPrUrl();
+    chrome.runtime.sendMessage({ type: 'prUrlChanged', prUrl: url }).catch(() => {});
+    if (url) prefetchDiff(url);
+  }
+  reportUrl();
 
   const origPush = history.pushState;
   const origReplace = history.replaceState;
