@@ -82,24 +82,16 @@
   });
 
   const prefetched = new Set();
-  async function prefetchDiff(prUrl) {
+  function prefetchDiff(prUrl) {
     if (prefetched.has(prUrl)) return;
     prefetched.add(prUrl);
-    try {
-      const res = await fetch(`${prUrl}.diff`, { credentials: 'include' });
-      if (!res.ok) {
-        console.warn('[PR Review] diff fetch returned', res.status, 'for', prUrl);
-        prefetched.delete(prUrl);
-        return;
-      }
-      const diff = await res.text();
-      chrome.runtime.sendMessage({ type: 'cacheDiff', prUrl, diff }).catch((err) => {
-        console.warn('[PR Review] cacheDiff sendMessage failed:', err?.message || err);
-      });
-    } catch (err) {
-      console.warn('[PR Review] diff prefetch failed for', prUrl, err?.message || err);
+    // The .diff URL redirects to patch-diff.githubusercontent.com, which the
+    // page-world fetch cannot cross-origin to. Hand it off to the background,
+    // which has host_permissions for both origins and is CORS-immune.
+    chrome.runtime.sendMessage({ type: 'prefetchDiff', prUrl }).catch((err) => {
+      console.warn('[PR Review] prefetchDiff dispatch failed:', err?.message || err);
       prefetched.delete(prUrl);
-    }
+    });
   }
 
   function reportUrl() {

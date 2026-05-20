@@ -129,17 +129,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return;
     }
     if (msg.type === 'cacheDiff') {
-      const bytes = msg.diff.length;
-      const lines = msg.diff.split('\n').length;
-      if (bytes > DIFF_BYTE_LIMIT || lines > DIFF_LINE_LIMIT) {
-        diffCache.delete(msg.prUrl);
-        diffStatus.set(msg.prUrl, { skipped: 'too-large', bytes, lines });
-      } else {
-        diffCache.set(msg.prUrl, msg.diff);
-        diffStatus.set(msg.prUrl, { ready: true, bytes, lines });
-      }
-      broadcast({ type: 'diffStatus', prUrl: msg.prUrl, status: diffStatus.get(msg.prUrl) });
+      // Legacy path (content-script-initiated fetch). Kept for any caller
+      // still using it. The current content script delegates to prefetchDiff
+      // below to dodge CORS on patch-diff.githubusercontent.com.
+      ingestDiff(msg.prUrl, msg.diff);
       sendResponse({ ok: true });
+      return;
+    }
+    if (msg.type === 'prefetchDiff') {
+      sendResponse({ ok: true });
+      try {
+        const res = await fetch(`${msg.prUrl}.diff`, { credentials: 'include' });
+        if (!res.ok) {
+          console.warn('[PR Review BG] diff fetch returned', res.status, 'for', msg.prUrl);
+          return;
+        }
+        const diff = await res.text();
+        ingestDiff(msg.prUrl, diff);
+      } catch (err) {
+        console.warn('[PR Review BG] diff prefetch failed for', msg.prUrl, err?.message || err);
+      }
       return;
     }
     if (msg.type === 'getDiffStatus') {
@@ -201,4 +210,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 function broadcast(msg) {
   chrome.runtime.sendMessage(msg).catch(() => {});
+}
+
+function ingestDiff(prUrl, diff) {
+  const bytes = diff.length;
+  const lines = diff.split('\n').length;
+  if (bytes > DIFF_BYTE_LIMIT || lines > DIFF_LINE_LIMIT) {
+    diffCache.delete(prUrl);
+    diffStatus.set(prUrl, { skipped: 'too-large', bytes, lines });
+  } else {
+    diffCache.set(prUrl, diff);
+    diffStatus.set(prUrl, { ready: true, bytes, lines });
+  }
+  broadcast({ type: 'diffStatus', prUrl, status: diffStatus.get(prUrl) });
 }
