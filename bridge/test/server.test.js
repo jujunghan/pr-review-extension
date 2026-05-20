@@ -82,3 +82,35 @@ test('POST /clear removes mapping', async () => {
   assert.equal(sessions.has('https://github.com/o/r/pull/1'), false);
   server.close();
 });
+
+test('POST /send sends error event when claude proc fails to spawn (ENOENT)', async () => {
+  const app = createApp({
+    runClaude: () => {
+      const failingProc = new EventEmitter();
+      failingProc.stdout = Readable.from([]);
+      failingProc.stderr = Readable.from([]);
+      failingProc.kill = () => {};
+      // Emit the ENOENT error after the caller (server) has had a chance to
+      // attach proc.on('error') synchronously — setImmediate fires after the
+      // current synchronous block completes, which is exactly what Node's
+      // internal spawn does on ENOENT.
+      setImmediate(() => {
+        const err = new Error('spawn claude ENOENT');
+        err.code = 'ENOENT';
+        failingProc.emit('error', err);
+      });
+      return failingProc;
+    },
+    sessions: stubSessions(),
+  });
+  const server = app.listen(0);
+  const { port } = server.address();
+  const res = await fetch(`http://localhost:${port}/send`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prUrl: 'https://github.com/o/r/pull/1', question: 'hi' }),
+  });
+  const text = await res.text();
+  assert.match(text, /claude.*CLI not found/);
+  server.close();
+});

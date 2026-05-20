@@ -103,6 +103,10 @@ async function send() {
   const question = $('#input').value.trim();
   if (!question) return;
   if (!currentPrUrl) { setStatus('Open a GitHub PR page first.', true); return; }
+  if (currentSelection && currentSelection.text.split('\n').length > 500) {
+    const ok = confirm(`Selection is ${currentSelection.text.split('\n').length} lines. Send anyway?`);
+    if (!ok) { setStatus('Cancelled.', false); return; }
+  }
 
   const userText = currentSelection
     ? `[${currentSelection.file || 'selection'}${currentSelection.lines ? `:${currentSelection.lines}` : ''}]\n\n${question}`

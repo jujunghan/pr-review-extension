@@ -57,6 +57,20 @@ export function createApp({ runClaude, sessions }) {
       res.write(`event: error\ndata: ${JSON.stringify({ message: err.message })}\n\n`);
     });
 
+    const TIMEOUT_MS = 30_000;
+    let idleTimer = setTimeout(timeoutOut, TIMEOUT_MS);
+    function bumpTimer() {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(timeoutOut, TIMEOUT_MS);
+    }
+    function timeoutOut() {
+      emitter.emit('error', new Error('No response for 30s. Aborted.'));
+      try { proc?.kill('SIGTERM'); } catch {}
+      endOnce();
+    }
+    emitter.on('delta', bumpTimer);
+    emitter.on('done', () => clearTimeout(idleTimer));
+
     let proc;
     try {
       proc = runClaude({ sessionId, isNew, message: formatted });
@@ -64,6 +78,14 @@ export function createApp({ runClaude, sessions }) {
       res.write(`event: error\ndata: ${JSON.stringify({ message: err.message })}\n\n`);
       return endOnce();
     }
+
+    proc.on('error', (err) => {
+      const msg = err.code === 'ENOENT'
+        ? '`claude` CLI not found on PATH. Install Claude Code and retry.'
+        : err.message;
+      emitter.emit('error', new Error(msg));
+      endOnce();
+    });
 
     req.on('close', () => {
       try { proc.kill('SIGTERM'); } catch {}
@@ -74,7 +96,10 @@ export function createApp({ runClaude, sessions }) {
     } catch (err) {
       emitter.emit('error', err);
     }
-    endOnce();
+    // Defer endOnce so that any proc 'error' events queued via setImmediate
+    // (e.g. ENOENT from Node's spawn internals) are handled before we close
+    // the response and their SSE writes are visible to the client.
+    setImmediate(endOnce);
   });
 
   return app;
