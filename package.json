@@ -1,0 +1,10 @@
+{
+  "name": "pr-review-extension",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["bridge"],
+  "scripts": {
+    "bridge:start": "node bridge/index.js",
+    "bridge:test": "node --test bridge/test/"
+  }
+}
