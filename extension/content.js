@@ -294,11 +294,23 @@
       ghostFloaterTarget = null;
       return;
     }
-    const offsetTop = rect.top + window.scrollY - 30;
-    const offsetLeft = rect.right + window.scrollX - 110;
+    // Sit clearly outside the textarea's right edge with a gap, vertically
+    // aligned with its top. Falls back above the textarea if there isn't
+    // room on the right.
     btn.style.display = 'inline-flex';
-    btn.style.top = `${Math.max(0, offsetTop)}px`;
-    btn.style.left = `${Math.max(0, offsetLeft)}px`;
+    const btnW = btn.offsetWidth || 110;
+    const btnH = btn.offsetHeight || 28;
+    const gap = 8;
+    const vpRight = window.scrollX + document.documentElement.clientWidth;
+    let top = rect.top + window.scrollY;
+    let left = rect.right + window.scrollX + gap;
+    if (left + btnW + gap > vpRight) {
+      // Not enough room to the right — float above the textarea instead.
+      left = Math.max(window.scrollX + gap, rect.right + window.scrollX - btnW);
+      top = rect.top + window.scrollY - btnH - gap;
+    }
+    btn.style.top = `${Math.max(0, top)}px`;
+    btn.style.left = `${Math.max(0, left)}px`;
     ghostFloaterTarget = textarea;
   }
 
