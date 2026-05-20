@@ -6,9 +6,9 @@ Chrome extension for reviewing GitHub PRs with Claude Code. Select a code hunk i
 
 ```
 Chrome Extension (Manifest V3, sidePanel)
-    │ HTTP + SSE
+    │ chrome.runtime.connectNative
     ▼
-Local Bridge Server (Node.js, Express, :8765)
+Native messaging host (bridge/host.js)
     │ child_process.spawn
     ▼
 claude CLI (`claude -p --output-format stream-json --session-id <uuid>`)
@@ -16,49 +16,71 @@ claude CLI (`claude -p --output-format stream-json --session-id <uuid>`)
 
 Each GitHub PR URL is mapped to a UUID session id. Within the same PR the session is resumed (`--resume`) so context accumulates. Switching to a different PR auto-clears the previous mapping.
 
+The host process is spawned and managed by Chrome itself via the Native Messaging API — no separate server to start.
+
 ## Requirements
 
 - Node.js 20+
 - Claude Code CLI on PATH (`which claude` returns a path)
-- Chrome / Chromium-based browser with Manifest V3 support
+- Chrome / Chromium-based browser (Manifest V3 + sidePanel API)
 
-## Setup
+## Install
 
 ```bash
+git clone git@github.com:jujunghan/pr-review-extension.git
 cd pr-review-extension
 npm install
 ```
 
-## Run
-
-```bash
-npm run bridge:start   # boots Express on http://localhost:8765
-```
-
-In Chrome:
-
-1. `chrome://extensions` → toggle **Developer mode**
-2. **Load unpacked** → select `extension/` directory
-3. Pin the action icon → click it on a GitHub PR to open the side panel
+1. In Chrome, open `chrome://extensions` and toggle **Developer mode**.
+2. Click **Load unpacked** → select the `extension/` directory.
+3. Copy the extension ID shown on the card (e.g. `nfgaabkjpomeocgfedaobhckmkbpojom`).
+4. Install the native messaging host manifest:
+   ```bash
+   npm run install-host -- --ext-id <EXTENSION_ID>
+   ```
+   Supports `--browser chrome` (default), `chrome-canary`, `brave`, `edge`, `chromium`.
+5. Reload the extension card in `chrome://extensions` once.
+6. Pin the toolbar icon and click it on any GitHub PR — the side panel opens.
 
 ## Use
 
-1. Open a GitHub PR page (`/<owner>/<repo>/pull/<n>`)
-2. Open the side panel
-3. Select code in the diff — preview appears in the input area
-4. Type your question, press Enter
-5. Streaming answer renders in the panel; follow-up questions retain the same PR session
-6. Click **Clear** to reset conversation (also auto-fires on PR navigation)
+1. Open a GitHub PR diff page (`/<owner>/<repo>/pull/<n>/files`).
+2. Open the side panel.
+3. **Selection floating action**: select code in the diff → small ✨ button appears next to the selection → click → side panel attaches the selection as context and focuses the input.
+4. **Review comment ghostwrite**: click `+` on a diff line to open GitHub's review comment textarea → click `✨ Claude` next to it → Claude drafts a constructive comment into the textarea (streaming).
+5. **Side panel chat**: ask any question in the side panel input. Within the same PR, follow-ups retain context.
+6. Switching to a different PR auto-clears the previous mapping.
 
 ## Tests
 
 ```bash
-npm run bridge:test
+npm test
 ```
+
+Covers the session store and stream-json parser. The host messaging loop is exercised manually.
 
 ## Limitations (MVP)
 
-- No PR comment posting (read-only)
+- No PR comment posting (read-only — the user submits the drafted comment via GitHub's own UI)
 - Single active PR (concurrent reviews not supported)
 - Local single-user only (no auth)
-- No CI/reviewer context auto-injection
+- macOS + Linux native-host install automated; Windows: copy the manifest manually (see below)
+
+### Windows manual install
+
+Save the file at:
+```
+%LOCALAPPDATA%\Google\Chrome\User Data\NativeMessagingHosts\com.pr_review.bridge.json
+```
+With contents (substitute paths):
+```json
+{
+  "name": "com.pr_review.bridge",
+  "description": "PR Review extension bridge to Claude CLI",
+  "path": "C:\\path\\to\\pr-review-extension\\bridge\\host.js",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://<EXTENSION_ID>/"]
+}
+```
+And associate `.js` with `node.exe` (or use a `.bat` wrapper).

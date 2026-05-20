@@ -189,9 +189,11 @@
   }, true);
 
   // ============ Review comment ghostwrite ============
-  const BRIDGE = 'http://localhost:8765';
   const BTN_MARKER = 'data-claude-ghost-btn';
   const TEXTAREA_SEL = 'textarea[name="comment[body]"], textarea.js-comment-field, textarea[aria-label*="comment" i]';
+  // streamId -> textarea (for routing background streamChunk back)
+  const ghostStreams = new Map();
+  let nextGhostStreamId = 1;
 
   function lineNumberForTextarea(textarea) {
     let el = textarea.closest('tr, .js-line-comments, [data-line-number]');
@@ -255,7 +257,7 @@
     }
   }
 
-  async function runGhostwrite(textarea, btn) {
+  function runGhostwrite(textarea, btn) {
     const prUrl = getPrUrl();
     if (!prUrl) return;
     const file = findEnclosingFile(textarea) || null;
@@ -270,59 +272,44 @@
     btn.disabled = true;
     const originalLabel = btn.textContent;
     btn.textContent = '✨ Drafting…';
-    const startValue = '';
-    textarea.value = startValue;
+    textarea.value = '';
 
-    try {
-      const res = await fetch(`${BRIDGE}/send`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          prUrl: `${prUrl}#ghostwrite`,
-          file, lines, code,
-          question: prompt,
-        }),
-      });
-      if (!res.ok || !res.body) {
-        textarea.value = `(Claude bridge error: ${res.status})\n${userText}`;
-        return;
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let idx;
-        while ((idx = buf.indexOf('\n\n')) >= 0) {
-          const chunk = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          handleChunk(chunk, textarea);
-        }
-      }
-    } catch (err) {
-      textarea.value = `(Bridge offline — start with: npm run bridge:start)\n${userText}`;
-    } finally {
-      textarea.disabled = wasDisabled;
-      btn.disabled = false;
-      btn.textContent = originalLabel;
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    }
+    const streamId = nextGhostStreamId++;
+    ghostStreams.set(streamId, {
+      textarea, btn, wasDisabled, originalLabel, userText,
+    });
+
+    chrome.runtime.sendMessage({
+      type: 'send',
+      streamId,
+      target: 'tab',
+      prUrl: `${prUrl}#ghostwrite`,
+      file, lines, code,
+      question: prompt,
+    }).catch((err) => {
+      finalizeGhost(streamId, `(Send failed: ${err?.message || err})\n${userText}`);
+    });
   }
 
-  function handleChunk(chunk, textarea) {
-    let event = 'message', data = '';
-    for (const line of chunk.split('\n')) {
-      if (line.startsWith('event:')) event = line.slice(6).trim();
-      else if (line.startsWith('data:')) data += line.slice(5).trim();
-    }
-    if (event === 'delta') {
-      let text = data;
-      try { text = JSON.parse(data); } catch {}
-      textarea.value += text;
-    }
+  function finalizeGhost(streamId, errText) {
+    const entry = ghostStreams.get(streamId);
+    if (!entry) return;
+    ghostStreams.delete(streamId);
+    if (errText) entry.textarea.value = errText;
+    entry.textarea.disabled = entry.wasDisabled;
+    entry.btn.disabled = false;
+    entry.btn.textContent = entry.originalLabel;
+    entry.textarea.dispatchEvent(new Event('input', { bubbles: true }));
   }
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type !== 'streamChunk') return;
+    const entry = ghostStreams.get(msg.streamId);
+    if (!entry) return;
+    if (msg.delta != null) entry.textarea.value += msg.delta;
+    else if (msg.done) finalizeGhost(msg.streamId, null);
+    else if (msg.error) finalizeGhost(msg.streamId, `(Claude error: ${msg.error})\n${entry.userText}`);
+  });
 
   function scanForTextareas(root) {
     const nodes = root.querySelectorAll?.(TEXTAREA_SEL);
