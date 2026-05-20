@@ -82,9 +82,23 @@
   });
 
   function reportUrl() {
-    chrome.runtime.sendMessage({ type: 'prUrlChanged', prUrl: getPrUrl() }).catch(() => {});
+    const url = getPrUrl();
+    chrome.runtime.sendMessage({ type: 'prUrlChanged', prUrl: url }).catch(() => {});
+    if (url) prefetchDiff(url);
   }
   reportUrl();
+
+  const prefetched = new Set();
+  async function prefetchDiff(prUrl) {
+    if (prefetched.has(prUrl)) return;
+    prefetched.add(prUrl);
+    try {
+      const res = await fetch(`${prUrl}.diff`, { credentials: 'include' });
+      if (!res.ok) return;
+      const diff = await res.text();
+      chrome.runtime.sendMessage({ type: 'cacheDiff', prUrl, diff }).catch(() => {});
+    } catch {}
+  }
 
   const origPush = history.pushState;
   const origReplace = history.replaceState;

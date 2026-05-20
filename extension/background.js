@@ -3,11 +3,20 @@
 // ghostwrite /send, /clear) by id. Streams responses back to the sender.
 
 const NATIVE_HOST = 'com.pr_review.bridge';
+const DIFF_BYTE_LIMIT = 200 * 1024; // 200KB hard skip
+const DIFF_LINE_LIMIT = 5000;       // 5K lines hard skip
+
 let activePrUrl = null;
 let port = null;
 let nextId = 1;
 // id -> { onDelta, onDone, onError }
 const pending = new Map();
+// prUrl -> diff text (only stored if within limits)
+const diffCache = new Map();
+// prUrl -> { skipped: 'too-large', bytes, lines } metadata for sidepanel
+const diffStatus = new Map();
+// prUrl set: whose diff has already been attached as the first user turn
+const diffAttached = new Set();
 
 function ensurePort() {
   if (port) return port;
@@ -65,8 +74,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       activePrUrl = msg.prUrl || null;
       if (prev && prev !== activePrUrl) {
         nativeSend({ type: 'clear', prUrl: prev }, {});
+        diffAttached.delete(prev);
+        diffAttached.delete(`${prev}#ghostwrite`);
       }
       broadcast({ type: 'prUrlChanged', prUrl: activePrUrl });
+      // Re-send the diff status for the new PR so the sidepanel can show it
+      if (activePrUrl && diffStatus.has(activePrUrl)) {
+        broadcast({ type: 'diffStatus', prUrl: activePrUrl, status: diffStatus.get(activePrUrl) });
+      }
       sendResponse({ ok: true });
       return;
     }
@@ -80,8 +95,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return;
     }
     if (msg.type === 'clearContext') {
-      if (activePrUrl) nativeSend({ type: 'clear', prUrl: activePrUrl }, {});
+      if (activePrUrl) {
+        nativeSend({ type: 'clear', prUrl: activePrUrl }, {});
+        diffAttached.delete(activePrUrl);
+      }
       sendResponse({ ok: true });
+      return;
+    }
+    if (msg.type === 'cacheDiff') {
+      const bytes = msg.diff.length;
+      const lines = msg.diff.split('\n').length;
+      if (bytes > DIFF_BYTE_LIMIT || lines > DIFF_LINE_LIMIT) {
+        diffCache.delete(msg.prUrl);
+        diffStatus.set(msg.prUrl, { skipped: 'too-large', bytes, lines });
+      } else {
+        diffCache.set(msg.prUrl, msg.diff);
+        diffStatus.set(msg.prUrl, { ready: true, bytes, lines });
+      }
+      broadcast({ type: 'diffStatus', prUrl: msg.prUrl, status: diffStatus.get(msg.prUrl) });
+      sendResponse({ ok: true });
+      return;
+    }
+    if (msg.type === 'getDiffStatus') {
+      sendResponse({ status: diffStatus.get(msg.prUrl) || null });
       return;
     }
     if (msg.type === 'openSidePanelWithSelection') {
@@ -111,7 +147,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           broadcast({ type: 'streamChunk', streamId, ...payload });
         }
       };
-      nativeSend({ type: 'send', prUrl, file, lines, code, question }, {
+
+      // On the first turn of a PR session, prepend the full diff so Claude
+      // has the whole PR as context from the start.
+      let finalQuestion = question;
+      const cacheKey = prUrl?.split('#')[0]; // strip #ghostwrite etc.
+      if (cacheKey && !diffAttached.has(prUrl) && diffCache.has(cacheKey)) {
+        const diff = diffCache.get(cacheKey);
+        finalQuestion = `Here is the full PR diff for context. Refer to it when answering.\n\n\`\`\`diff\n${diff}\n\`\`\`\n\n---\n\n${question}`;
+        diffAttached.add(prUrl);
+      }
+
+      nativeSend({ type: 'send', prUrl, file, lines, code, question: finalQuestion }, {
         onDelta: (text) => replyTo({ delta: text }),
         onDone: (sessionId) => replyTo({ done: true, sessionId }),
         onError: (message) => replyTo({ error: message }),
