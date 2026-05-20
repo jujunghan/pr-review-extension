@@ -159,6 +159,47 @@ body {
   outline-offset: 1px;
 }
 
+/* ============ Repo path banner ============ */
+.repo-path-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 14px;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+.repo-path-banner[data-state="set"] {
+  background: var(--bg);
+}
+.repo-path-banner[data-state="unset"] {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  color: var(--accent-strong);
+}
+.repo-path-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.repo-path-edit {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  color: var(--text);
+  cursor: pointer;
+}
+.repo-path-edit:hover {
+  background: var(--surface-2);
+}
+
 /* ============ Diff status banner ============ */
 .diff-status {
   padding: 6px 14px;
