@@ -33,13 +33,20 @@ async function init() {
   $('#clear-btn').addEventListener('click', () => {
     chrome.runtime.sendMessage({ type: 'clearContext' });
     clearHistoryUI();
-    setStatus('Context cleared.', false);
+    setStatus('Context cleared.');
+  });
+
+  $('#context-dismiss').addEventListener('click', () => {
+    currentSelection = null;
+    renderContextPreview();
   });
 }
 
 function setPrUrl(url) {
   currentPrUrl = url;
-  $('#pr-label').textContent = url ? prShortLabel(url) : 'No PR detected';
+  const label = $('#pr-label');
+  label.textContent = url ? prShortLabel(url) : 'No PR detected';
+  label.classList.toggle('has-pr', !!url);
 }
 
 function prShortLabel(url) {
@@ -52,11 +59,18 @@ function renderContextPreview() {
   if (!currentSelection) { el.hidden = true; return; }
   const { file, lines, text } = currentSelection;
   const header = file ? `${file}${lines ? `:${lines}` : ''}` : 'selection';
-  el.textContent = `${header}\n${text.slice(0, 400)}${text.length > 400 ? '…' : ''}`;
+  $('#context-header-text').textContent = header;
+  $('#context-body').textContent = `${text.slice(0, 400)}${text.length > 400 ? '…' : ''}`;
   el.hidden = false;
 }
 
+function hideEmptyState() {
+  const es = $('#empty-state');
+  if (es) es.remove();
+}
+
 function appendUserMessage(text) {
+  hideEmptyState();
   const div = document.createElement('div');
   div.className = 'msg user';
   div.textContent = text;
@@ -65,6 +79,7 @@ function appendUserMessage(text) {
 }
 
 function startAssistantMessage() {
+  hideEmptyState();
   const div = document.createElement('div');
   div.className = 'msg assistant';
   div.textContent = '';
@@ -89,23 +104,45 @@ function scrollHistory() {
 }
 
 function clearHistoryUI() {
-  $('#history').innerHTML = '';
+  const h = $('#history');
+  h.innerHTML = '';
   currentAssistantEl = null;
+  renderEmptyState();
 }
 
-function setStatus(text, isError) {
+function renderEmptyState() {
+  const h = $('#history');
+  const tpl = `<div id="empty-state" class="empty-state">
+    <div class="empty-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="36" height="36">
+        <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+          d="M4 6h16M4 12h10M4 18h7M16 14l3 3-3 3M16 14v6" />
+      </svg>
+    </div>
+    <p class="empty-title">Ask Claude about this PR</p>
+    <ol class="empty-steps">
+      <li>Open a GitHub PR diff page</li>
+      <li>Select a hunk in the diff</li>
+      <li>Ask your question below</li>
+    </ol>
+  </div>`;
+  h.insertAdjacentHTML('beforeend', tpl);
+}
+
+function setStatus(text, opts = {}) {
   const s = $('#status');
   s.textContent = text || '';
-  s.classList.toggle('error', !!isError);
+  s.classList.toggle('error', !!opts.error);
+  s.classList.toggle('thinking', !!opts.thinking);
 }
 
 async function send() {
   const question = $('#input').value.trim();
   if (!question) return;
-  if (!currentPrUrl) { setStatus('Open a GitHub PR page first.', true); return; }
+  if (!currentPrUrl) { setStatus('Open a GitHub PR page first.', { error: true }); return; }
   if (currentSelection && currentSelection.text.split('\n').length > 500) {
     const ok = confirm(`Selection is ${currentSelection.text.split('\n').length} lines. Send anyway?`);
-    if (!ok) { setStatus('Cancelled.', false); return; }
+    if (!ok) { setStatus('Cancelled.'); return; }
   }
 
   const userText = currentSelection
@@ -113,7 +150,7 @@ async function send() {
     : question;
   appendUserMessage(userText);
   $('#input').value = '';
-  setStatus('Asking…', false);
+  setStatus('Thinking…', { thinking: true });
   startAssistantMessage();
 
   const payload = {
@@ -135,14 +172,14 @@ async function send() {
     });
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => '');
-      setStatus(`Bridge error (${res.status}): ${text}`, true);
+      setStatus(`Bridge error (${res.status}): ${text}`, { error: true });
       finishAssistantMessage();
       return;
     }
     await consumeSse(res.body);
-    setStatus('', false);
+    setStatus('');
   } catch (err) {
-    setStatus(`Bridge offline. Start it with: npm run bridge:start`, true);
+    setStatus(`Bridge offline. Start it with: npm run bridge:start`, { error: true });
   } finally {
     finishAssistantMessage();
   }
@@ -181,6 +218,6 @@ function handleSseChunk(chunk) {
   } else if (event === 'error') {
     let err = { message: data };
     try { err = JSON.parse(data); } catch {}
-    setStatus(`Claude error: ${err.message}`, true);
+    setStatus(`Claude error: ${err.message}`, { error: true });
   }
 }
