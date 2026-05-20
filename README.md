@@ -40,15 +40,19 @@ npm install
    npm run install-host -- --ext-id <EXTENSION_ID>
    ```
    Supports `--browser chrome` (default), `chrome-canary`, `brave`, `edge`, `chromium`.
+
+   The install-host script also generates `bridge/host-launcher.sh` that pins node's absolute path and your shell `$PATH`. Re-run it any time your `claude` location, node version, or shell PATH changes.
 5. Reload the extension card in `chrome://extensions` once.
 6. Pin the toolbar icon and click it on any GitHub PR — the side panel opens.
+
+If the side panel ever shows `Native host has exited`, check `${TMPDIR:-/tmp}/pr-review-host.log` — the launcher appends host stderr there.
 
 ## Use
 
 1. Open a GitHub PR diff page (`/<owner>/<repo>/pull/<n>/files`).
 2. Open the side panel.
 3. **Selection floating action**: select code in the diff → small ✨ button appears next to the selection → click → side panel attaches the selection as context and focuses the input.
-4. **Review comment ghostwrite**: click `+` on a diff line to open GitHub's review comment textarea → click `✨ Claude` next to it → Claude drafts a constructive comment into the textarea (streaming).
+4. **Per-line shortcut**: click `+` on a diff line to open GitHub's review comment textarea → `✨ Ask in panel` floats next to it → click to send that line to the side panel as context.
 5. **Side panel chat**: ask any question in the side panel input. Within the same PR, follow-ups retain context.
 6. Switching to a different PR auto-clears the previous mapping.
 
