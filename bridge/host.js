@@ -132,27 +132,11 @@ async function handleSend(msg) {
     writeMessage({ id, type: 'done', sessionId: info.sessionId });
   });
 
-  const TIMEOUT_MS = 60_000;
-  let idleTimer = setTimeout(timeoutOut, TIMEOUT_MS);
-  function bumpTimer() {
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(timeoutOut, TIMEOUT_MS);
-  }
-  function timeoutOut() {
-    writeMessage({ id, type: 'error', message: 'No response for 60s. Aborted.' });
-    try { proc.kill('SIGTERM'); } catch {}
-    inflight.delete(id);
-  }
-  emitter.on('delta', bumpTimer);
-  emitter.on('done', () => clearTimeout(idleTimer));
-  emitter.on('error', () => clearTimeout(idleTimer));
-
   try {
     await parseStream(proc.stdout, emitter);
   } catch (err) {
     writeMessage({ id, type: 'error', message: err.message });
   }
-  clearTimeout(idleTimer);
 }
 
 process.stdin.on('end', () => process.exit(0));
