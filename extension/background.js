@@ -3,8 +3,8 @@
 // ghostwrite /send, /clear) by id. Streams responses back to the sender.
 
 const NATIVE_HOST = 'com.pr_review.bridge';
-const DIFF_BYTE_LIMIT = 200 * 1024; // 200KB hard skip
-const DIFF_LINE_LIMIT = 5000;       // 5K lines hard skip
+const DIFF_BYTE_LIMIT = 50 * 1024;  // 50KB hard skip — keeps first-token latency low
+const DIFF_LINE_LIMIT = 1500;       // 1.5K lines hard skip
 
 let activePrUrl = null;
 let port = null;
@@ -207,7 +207,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const cacheKey = prUrl?.split('#')[0]; // strip #ghostwrite etc.
       if (cacheKey && !diffAttached.has(prUrl) && diffCache.has(cacheKey)) {
         const diff = diffCache.get(cacheKey);
-        finalQuestion = `Here is the full PR diff for context. Refer to it when answering.\n\n\`\`\`diff\n${diff}\n\`\`\`\n\n---\n\n${question}`;
+        finalQuestion = `PR diff (review context):\n\`\`\`diff\n${diff}\n\`\`\`\n\n${question}`;
         diffAttached.add(prUrl);
       }
 
