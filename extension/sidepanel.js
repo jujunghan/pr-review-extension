@@ -5,6 +5,14 @@ let currentPrUrl = null;
 let currentSelection = null;
 let currentAssistantEl = null;
 
+// Paste collapse: long paste payloads are folded into [Pasted text #N — L lines]
+// placeholders in the textarea, and expanded back on send.
+const PASTE_LINE_THRESHOLD = 10;
+const PASTE_CHAR_THRESHOLD = 400;
+const PASTE_PLACEHOLDER_RE = /\[Pasted text #(\d+) — \d+ lines\]/g;
+const pasteRegistry = new Map();
+let pasteCounter = 0;
+
 init();
 
 async function init() {
@@ -23,12 +31,15 @@ async function init() {
     }
   });
 
-  $('#input').addEventListener('keydown', (e) => {
+  const input = $('#input');
+  input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       send();
     }
   });
+  input.addEventListener('paste', handlePaste);
+  input.addEventListener('input', resetPasteRegistryIfEmpty);
 
   $('#clear-btn').addEventListener('click', () => {
     chrome.runtime.sendMessage({ type: 'clearContext' });
@@ -73,9 +84,21 @@ function appendUserMessage(text) {
   hideEmptyState();
   const div = document.createElement('div');
   div.className = 'msg user';
-  div.textContent = text;
+  div.innerHTML = renderWithPasteRefs(text);
   $('#history').appendChild(div);
   scrollHistory();
+}
+
+function renderWithPasteRefs(text) {
+  const escaped = escapeHtml(text);
+  return escaped.replace(/\[Pasted text #(\d+) — (\d+) lines\]/g,
+    (_, n, lines) => `<span class="paste-ref" title="${lines} lines pasted">[Pasted text #${n} — ${lines} lines]</span>`);
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
 }
 
 function startAssistantMessage() {
@@ -129,6 +152,45 @@ function renderEmptyState() {
   h.insertAdjacentHTML('beforeend', tpl);
 }
 
+function handlePaste(e) {
+  const text = e.clipboardData?.getData('text');
+  if (!text) return;
+  const lineCount = text.split('\n').length;
+  if (lineCount < PASTE_LINE_THRESHOLD && text.length < PASTE_CHAR_THRESHOLD) return;
+
+  e.preventDefault();
+  pasteCounter += 1;
+  const id = pasteCounter;
+  pasteRegistry.set(id, text);
+  const placeholder = `[Pasted text #${id} — ${lineCount} lines]`;
+  insertAtCursor(e.target, placeholder);
+}
+
+function insertAtCursor(textarea, text) {
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const before = textarea.value.slice(0, start);
+  const after = textarea.value.slice(end);
+  textarea.value = `${before}${text}${after}`;
+  const pos = start + text.length;
+  textarea.selectionStart = textarea.selectionEnd = pos;
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function resetPasteRegistryIfEmpty(e) {
+  if (e.target.value === '') {
+    pasteRegistry.clear();
+    pasteCounter = 0;
+  }
+}
+
+function expandPastes(text) {
+  return text.replace(PASTE_PLACEHOLDER_RE, (match, idStr) => {
+    const original = pasteRegistry.get(Number(idStr));
+    return original ?? match;
+  });
+}
+
 function setStatus(text, opts = {}) {
   const s = $('#status');
   s.textContent = text || '';
@@ -137,8 +199,8 @@ function setStatus(text, opts = {}) {
 }
 
 async function send() {
-  const question = $('#input').value.trim();
-  if (!question) return;
+  const rawQuestion = $('#input').value.trim();
+  if (!rawQuestion) return;
   if (!currentPrUrl) { setStatus('Open a GitHub PR page first.', { error: true }); return; }
   if (currentSelection && currentSelection.text.split('\n').length > 500) {
     const ok = confirm(`Selection is ${currentSelection.text.split('\n').length} lines. Send anyway?`);
@@ -146,19 +208,23 @@ async function send() {
   }
 
   const userText = currentSelection
-    ? `[${currentSelection.file || 'selection'}${currentSelection.lines ? `:${currentSelection.lines}` : ''}]\n\n${question}`
-    : question;
+    ? `[${currentSelection.file || 'selection'}${currentSelection.lines ? `:${currentSelection.lines}` : ''}]\n\n${rawQuestion}`
+    : rawQuestion;
   appendUserMessage(userText);
   $('#input').value = '';
   setStatus('Thinking…', { thinking: true });
   startAssistantMessage();
+
+  const expandedQuestion = expandPastes(rawQuestion);
+  pasteRegistry.clear();
+  pasteCounter = 0;
 
   const payload = {
     prUrl: currentPrUrl,
     file: currentSelection?.file,
     lines: currentSelection?.lines,
     code: currentSelection?.text,
-    question,
+    question: expandedQuestion,
   };
   // Reset selection after attaching once
   currentSelection = null;
