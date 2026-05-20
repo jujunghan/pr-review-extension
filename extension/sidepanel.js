@@ -1,9 +1,10 @@
-const BRIDGE = 'http://localhost:8765';
 const $ = (sel) => document.querySelector(sel);
 
 let currentPrUrl = null;
 let currentSelection = null;
 let currentAssistantEl = null;
+let activeStreamId = null;
+let nextStreamId = 1;
 
 // Paste collapse: long paste payloads are folded into [Pasted text #N — L lines]
 // placeholders in the textarea, and expanded back on send.
@@ -31,6 +32,18 @@ async function init() {
     }
     if (msg.type === 'focusInput') {
       $('#input').focus();
+    }
+    if (msg.type === 'streamChunk' && msg.streamId === activeStreamId) {
+      if (msg.delta != null) appendAssistantDelta(msg.delta);
+      else if (msg.done) {
+        finishAssistantMessage();
+        setStatus('');
+        activeStreamId = null;
+      } else if (msg.error) {
+        setStatus(`Claude error: ${msg.error}`, { error: true });
+        finishAssistantMessage();
+        activeStreamId = null;
+      }
     }
   });
 
@@ -233,60 +246,14 @@ async function send() {
   currentSelection = null;
   renderContextPreview();
 
-  try {
-    const res = await fetch(`${BRIDGE}/send`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok || !res.body) {
-      const text = await res.text().catch(() => '');
-      setStatus(`Bridge error (${res.status}): ${text}`, { error: true });
-      finishAssistantMessage();
-      return;
-    }
-    await consumeSse(res.body);
-    setStatus('');
-  } catch (err) {
-    setStatus(`Bridge offline. Start it with: npm run bridge:start`, { error: true });
-  } finally {
+  activeStreamId = nextStreamId++;
+  chrome.runtime.sendMessage({
+    type: 'send',
+    streamId: activeStreamId,
+    ...payload,
+  }).catch((err) => {
+    setStatus(`Send failed: ${err?.message || err}`, { error: true });
     finishAssistantMessage();
-  }
-}
-
-async function consumeSse(body) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let idx;
-    while ((idx = buf.indexOf('\n\n')) >= 0) {
-      const chunk = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      handleSseChunk(chunk);
-    }
-  }
-}
-
-function handleSseChunk(chunk) {
-  let event = 'message';
-  let data = '';
-  for (const line of chunk.split('\n')) {
-    if (line.startsWith('event:')) event = line.slice(6).trim();
-    else if (line.startsWith('data:')) data += line.slice(5).trim();
-  }
-  if (event === 'delta') {
-    let text = data;
-    try { text = JSON.parse(data); } catch {}
-    appendAssistantDelta(text);
-  } else if (event === 'done') {
-    finishAssistantMessage();
-  } else if (event === 'error') {
-    let err = { message: data };
-    try { err = JSON.parse(data); } catch {}
-    setStatus(`Claude error: ${err.message}`, { error: true });
-  }
+    activeStreamId = null;
+  });
 }

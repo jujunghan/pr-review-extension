@@ -4,7 +4,7 @@
   "private": true,
   "workspaces": ["bridge"],
   "scripts": {
-    "bridge:start": "node bridge/index.js",
-    "bridge:test": "node --test 'bridge/test/**/*.test.js'"
+    "install-host": "node bridge/install-host.js",
+    "test": "node --test 'bridge/test/**/*.test.js'"
   }
 }

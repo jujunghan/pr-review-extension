@@ -2,13 +2,10 @@
   "name": "@pr-review/bridge",
   "version": "0.1.0",
   "type": "module",
-  "main": "index.js",
+  "main": "host.js",
   "scripts": {
-    "start": "node index.js",
-    "test": "node --test test/"
-  },
-  "dependencies": {
-    "express": "^4.19.2"
+    "install-host": "node install-host.js",
+    "test": "node --test 'test/**/*.test.js'"
   },
   "engines": {
     "node": ">=20"
