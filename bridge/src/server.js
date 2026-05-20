@@ -71,15 +71,20 @@ export function createApp({ runClaude, sessions }) {
     emitter.on('delta', bumpTimer);
     emitter.on('done', () => clearTimeout(idleTimer));
 
+    const logPrefix = `[claude ${sessionId.slice(0, 8)}]`;
+    console.log(`${logPrefix} spawn isNew=${isNew} prUrl=${prUrl} msg.length=${formatted.length}`);
+
     let proc;
     try {
       proc = runClaude({ sessionId, isNew, message: formatted });
     } catch (err) {
+      console.error(`${logPrefix} runClaude threw:`, err);
       res.write(`event: error\ndata: ${JSON.stringify({ message: err.message })}\n\n`);
       return endOnce();
     }
 
     proc.on('error', (err) => {
+      console.error(`${logPrefix} proc 'error' event:`, err.code, err.message);
       const msg = err.code === 'ENOENT'
         ? '`claude` CLI not found on PATH. Install Claude Code and retry.'
         : err.message;
@@ -87,8 +92,27 @@ export function createApp({ runClaude, sessions }) {
       endOnce();
     });
 
-    req.on('close', () => {
-      try { proc.kill('SIGTERM'); } catch {}
+    let stderrBuf = '';
+    proc.stderr?.on('data', (chunk) => {
+      stderrBuf += chunk;
+      if (stderrBuf.length > 2000) stderrBuf = stderrBuf.slice(-2000);
+      process.stderr.write(`${logPrefix} stderr: ${chunk}`);
+    });
+
+    proc.on('exit', (code, signal) => {
+      console.log(`${logPrefix} exit code=${code} signal=${signal} stderr.length=${stderrBuf.length}`);
+      if (code !== 0 && !ended) {
+        emitter.emit('error', new Error(`claude exited (code=${code}): ${stderrBuf.slice(-400) || '(no stderr)'}`));
+      }
+    });
+
+    // Note: req.on('close') fires on Node 18+ whenever the request body
+    // finishes — even right after the handler starts. We only want to abort
+    // the spawned proc when the *response* is closed before we ended it.
+    res.on('close', () => {
+      if (!ended) {
+        try { proc.kill('SIGTERM'); } catch {}
+      }
     });
 
     try {
