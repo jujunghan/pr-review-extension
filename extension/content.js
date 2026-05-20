@@ -289,18 +289,21 @@
   // GitHub's review-comment dialog wraps the textarea in a card whose
   // toolbar + header live above the textarea but inside the same visual
   // box. Anchoring to textarea.rect therefore puts the button inside the
-  // box. Walk up to the outermost ancestor that's still narrower than
-  // the viewport — that's the visible card — and anchor to its top edge.
+  // box. Walk up and keep adopting an ancestor only when it visibly
+  // extends above OR below the textarea — that's what makes it the
+  // 'card' instead of a same-size wrapper.
   function findOuterCard(textarea) {
-    let cur = textarea;
+    const tRect = textarea.getBoundingClientRect();
+    let cur = textarea.parentElement;
     let last = textarea;
-    const stop = document.body;
     let depth = 0;
-    while (cur && cur !== stop && depth < 12) {
+    while (cur && cur !== document.body && depth < 12) {
       const r = cur.getBoundingClientRect();
-      if (r.width > window.innerWidth * 0.9) break;
       if (r.width === 0 || r.height === 0) break;
-      last = cur;
+      if (r.width > window.innerWidth * 0.9) break; // hit page chrome
+      if (r.top < tRect.top - 2 || r.bottom > tRect.bottom + 2) {
+        last = cur;
+      }
       cur = cur.parentElement;
       depth++;
     }
