@@ -202,10 +202,13 @@
     if (lastSelectionForAction) showFloatingAction(lastSelectionForAction);
   }, true);
 
-  // ============ Review comment ghostwrite ============
-  const BTN_MARKER = 'data-claude-ghost-btn';
-  // Covers legacy (name=comment[body]), classic (.js-comment-field), and the
-  // modern React Markdown editor (placeholder="Leave a comment", aria-label).
+  // ============ Review-line shortcut to side panel ============
+  // When GitHub's per-line review comment textarea appears (the dialog that
+  // pops up from the '+' button on a diff line), put a small floating
+  // 'Ask in panel' button next to it. Clicking it does NOT write anything
+  // into GitHub's textarea — it just copies the line's hunk context into
+  // the side panel input so the user can type a question there.
+  const BTN_MARKER = 'data-claude-line-btn';
   const TEXTAREA_SEL = [
     'textarea[name="comment[body]"]',
     'textarea.js-comment-field',
@@ -214,9 +217,6 @@
     'textarea[placeholder*="reply" i]',
     'textarea[placeholder*="review" i]',
   ].join(', ');
-  // streamId -> textarea (for routing background streamChunk back)
-  const ghostStreams = new Map();
-  let nextGhostStreamId = 1;
 
   function lineNumberForTextarea(textarea) {
     let el = textarea.closest('tr, .js-line-comments, [data-line-number]');
@@ -255,8 +255,8 @@
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.setAttribute(BTN_MARKER, '');
-    btn.textContent = '✨ Ask Claude';
-    btn.title = 'Draft this review comment with Claude';
+    btn.textContent = '✨ Ask in panel';
+    btn.title = 'Send this line to the Claude side panel';
     Object.assign(btn.style, {
       position: 'absolute',
       zIndex: '2147483645',
@@ -278,7 +278,7 @@
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (ghostFloaterTarget) runGhostwrite(ghostFloaterTarget, btn);
+      if (ghostFloaterTarget) sendLineToSidePanel(ghostFloaterTarget);
     });
     document.documentElement.appendChild(btn);
     ghostFloater = btn;
@@ -331,59 +331,21 @@
     }
   });
 
-  function runGhostwrite(textarea, btn) {
+  function sendLineToSidePanel(textarea) {
     const prUrl = getPrUrl();
     if (!prUrl) return;
     const file = findEnclosingFile(textarea) || null;
     const lines = lineNumberForTextarea(textarea);
     const code = lineCodeForTextarea(textarea);
-    const userText = textarea.value.trim();
-
-    const prompt = `[Reviewer's partial draft]:\n${userText || '(none)'}\n\nDraft or continue a constructive PR review comment for the hunk above. Be concise, specific, no preamble. Reply in Korean if the codebase comments are Korean, else English.`;
-
-    const wasDisabled = textarea.disabled;
-    textarea.disabled = true;
-    btn.disabled = true;
-    const originalLabel = btn.textContent;
-    btn.textContent = '✨ Drafting…';
-    textarea.value = '';
-
-    const streamId = nextGhostStreamId++;
-    ghostStreams.set(streamId, {
-      textarea, btn, wasDisabled, originalLabel, userText,
-    });
-
     chrome.runtime.sendMessage({
-      type: 'send',
-      streamId,
-      target: 'tab',
-      prUrl: `${prUrl}#ghostwrite`,
-      file, lines, code,
-      question: prompt,
-    }).catch((err) => {
-      finalizeGhost(streamId, `(Send failed: ${err?.message || err})\n${userText}`);
-    });
+      type: 'openSidePanelWithSelection',
+      prUrl,
+      file,
+      lines,
+      text: code || (file && lines ? `(line ${lines} of ${file})` : '(line context)'),
+    }).catch(() => {});
+    hideGhostFloater();
   }
-
-  function finalizeGhost(streamId, errText) {
-    const entry = ghostStreams.get(streamId);
-    if (!entry) return;
-    ghostStreams.delete(streamId);
-    if (errText) entry.textarea.value = errText;
-    entry.textarea.disabled = entry.wasDisabled;
-    entry.btn.disabled = false;
-    entry.btn.textContent = entry.originalLabel;
-    entry.textarea.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg?.type !== 'streamChunk') return;
-    const entry = ghostStreams.get(msg.streamId);
-    if (!entry) return;
-    if (msg.delta != null) entry.textarea.value += msg.delta;
-    else if (msg.done) finalizeGhost(msg.streamId, null);
-    else if (msg.error) finalizeGhost(msg.streamId, `(Claude error: ${msg.error})\n${entry.userText}`);
-  });
 
   function scanForTextareas(root) {
     const nodes = root.querySelectorAll?.(TEXTAREA_SEL);
