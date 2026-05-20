@@ -29,6 +29,9 @@ async function init() {
       currentSelection = { file: msg.file, lines: msg.lines, text: msg.text };
       renderContextPreview();
     }
+    if (msg.type === 'focusInput') {
+      $('#input').focus();
+    }
   });
 
   const input = $('#input');
