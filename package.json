@@ -2,9 +2,13 @@
   "name": "pr-review-extension",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "workspaces": ["bridge"],
   "scripts": {
     "install-host": "node bridge/install-host.js",
-    "test": "node --test 'bridge/test/**/*.test.js'"
+    "sync-manifest-version": "node scripts/sync-manifest-version.js",
+    "test:bridge": "node --test 'bridge/test/**/*.test.js'",
+    "test:scripts": "node --test 'scripts/test/**/*.test.js'",
+    "test": "npm run test:bridge && npm run test:scripts"
   }
 }
