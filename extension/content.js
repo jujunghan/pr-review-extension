@@ -297,11 +297,14 @@
     let cur = textarea.parentElement;
     let last = textarea;
     let depth = 0;
-    while (cur && cur !== document.body && depth < 12) {
+    while (cur && cur !== document.body && depth < 16) {
       const r = cur.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) break;
-      if (r.width > window.innerWidth * 0.9) break; // hit page chrome
-      if (r.top < tRect.top - 2 || r.bottom > tRect.bottom + 2) {
+      // Hit page chrome — stop.
+      if (r.width > window.innerWidth * 0.9) break;
+      // Zero-size ancestor (display: contents / portal wrapper). Don't
+      // adopt, but keep walking — the real card is usually one level up.
+      if (r.width > 0 && r.height > 0 &&
+          (r.top < tRect.top - 2 || r.bottom > tRect.bottom + 2)) {
         last = cur;
       }
       cur = cur.parentElement;
@@ -322,7 +325,7 @@
     btn.style.display = 'inline-flex';
     const btnW = btn.offsetWidth || 110;
     const btnH = btn.offsetHeight || 28;
-    const gap = 8;
+    const gap = 12;
     // Default: right-outside the card, aligned to its top — unambiguously
     // outside the box. Fallback above (or below) only if the viewport
     // doesn't have horizontal room.
