@@ -482,6 +482,15 @@ async function init() {
     setStatus('Context cleared.');
   });
 
+  $('#sync-btn').addEventListener('click', async () => {
+    const res = await chrome.runtime.sendMessage({ type: 'syncCurrentPr' });
+    if (res?.prUrl) {
+      setStatus('Synced to current PR.');
+    } else {
+      setStatus('Open a GitHub PR in the active tab first.', { error: true });
+    }
+  });
+
   $('#context-dismiss').addEventListener('click', () => {
     currentSelection = null;
     renderContextPreview();

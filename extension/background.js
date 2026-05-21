@@ -130,29 +130,79 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 });
 
+// Extracts the PR root URL from a tab URL like
+// https://github.com/owner/repo/pull/123/files → keeps the /pull/123 prefix.
+// Returns null for anything that isn't a github PR page.
+const PR_URL_RE = /^(https?:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+)/;
+function extractPrUrl(url) {
+  if (!url) return null;
+  const m = url.match(PR_URL_RE);
+  return m ? m[1] : null;
+}
+
+// Shared transition logic — called from the explicit prUrlChanged message
+// (content script), the tab event listeners (auto-detect), and the manual
+// sync button. Pass through the same broadcasts in all three paths.
+async function applyPrUrlChange(newPrUrl) {
+  await prSessionsReady;
+  const prev = activePrUrl;
+  const next = newPrUrl || null;
+  if (prev === next) return;
+  activePrUrl = next;
+  if (prev && prev !== next) {
+    nativeSend({ type: 'clear', prUrl: prev }, {});
+    diffAttached.delete(prev);
+    diffAttached.delete(`${prev}#ghostwrite`);
+  }
+  broadcast({
+    type: 'prUrlChanged',
+    prUrl: activePrUrl,
+    hasStoredSession: activePrUrl ? prSessions.has(activePrUrl) : false,
+  });
+  if (activePrUrl && diffStatus.has(activePrUrl)) {
+    broadcast({ type: 'diffStatus', prUrl: activePrUrl, status: diffStatus.get(activePrUrl) });
+  }
+}
+
+// Re-derives the active PR from whichever tab is currently active in the
+// focused window. Called by the tab listeners and by the sidepanel's manual
+// Sync button.
+async function syncActiveTabPr() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    await applyPrUrlChange(extractPrUrl(tab?.url));
+  } catch {
+    // chrome.tabs.query can throw in unusual contexts (service worker startup
+    // race, no focused window). Swallow — the manual sync button + content
+    // script will recover on the next signal.
+  }
+}
+
+// GitHub uses Turbo (HTML5 pushState) for inter-PR navigation, so the
+// content script's load-time prUrlChanged misses transitions like
+// /pull/100 → /pull/101. chrome.tabs.onUpdated fires on pushState too.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (!tab.active) return;
+  if (!changeInfo.url) return;
+  syncActiveTabPr();
+});
+
+// User switches to a different tab — re-derive in case the new tab is on
+// a different PR (or not a PR at all).
+chrome.tabs.onActivated.addListener(() => {
+  syncActiveTabPr();
+});
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     if (msg.type === 'prUrlChanged') {
-      await prSessionsReady;
-      const prev = activePrUrl;
-      activePrUrl = msg.prUrl || null;
-      if (prev && prev !== activePrUrl) {
-        nativeSend({ type: 'clear', prUrl: prev }, {});
-        diffAttached.delete(prev);
-        diffAttached.delete(`${prev}#ghostwrite`);
-        // Intentionally do NOT forgetSession(prev) — we want the user to
-        // be able to come back to that PR later and resume from storage.
-      }
-      broadcast({
-        type: 'prUrlChanged',
-        prUrl: activePrUrl,
-        hasStoredSession: activePrUrl ? prSessions.has(activePrUrl) : false,
-      });
-      // Re-send the diff status for the new PR so the sidepanel can show it
-      if (activePrUrl && diffStatus.has(activePrUrl)) {
-        broadcast({ type: 'diffStatus', prUrl: activePrUrl, status: diffStatus.get(activePrUrl) });
-      }
+      await applyPrUrlChange(msg.prUrl);
       sendResponse({ ok: true });
+      return;
+    }
+    if (msg.type === 'syncCurrentPr') {
+      await syncActiveTabPr();
+      sendResponse({ ok: true, prUrl: activePrUrl });
       return;
     }
     if (msg.type === 'selectionChanged') {
