@@ -58,8 +58,15 @@ export function runClaude({ sessionId, isNew, message, cwd, extraDirs }) {
   delete env.CMUX_SURFACE_ID;
   delete env.CMUX_WORKSPACE_ID;
   delete env.CMUX_TAB_ID;
-  const claudeBin = process.env.PR_REVIEW_CLAUDE_BIN || 'claude';
-  return spawn(claudeBin, args, {
+  // Spawn 'claude' via PATH lookup (the launcher script exports a pinned PATH
+  // upfront). Earlier we tried honoring PR_REVIEW_CLAUDE_BIN from the launcher
+  // for a "dead safety net" cleanup, but in environments where the resolved
+  // claude is a wrapper script (e.g. cmux's claude wrapper), passing an
+  // absolute path changes the wrapper's argv[0] and its self-detection logic
+  // takes a different code path that ends up injecting hooks/settings the
+  // host process can't satisfy. Plain PATH lookup matches the wrapper's
+  // expected invocation shape and keeps the existing behavior.
+  return spawn('claude', args, {
     cwd: expandTilde(cwd) || process.cwd(),
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
