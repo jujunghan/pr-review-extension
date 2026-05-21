@@ -58,7 +58,8 @@ export function runClaude({ sessionId, isNew, message, cwd, extraDirs }) {
   delete env.CMUX_SURFACE_ID;
   delete env.CMUX_WORKSPACE_ID;
   delete env.CMUX_TAB_ID;
-  return spawn('claude', args, {
+  const claudeBin = process.env.PR_REVIEW_CLAUDE_BIN || 'claude';
+  return spawn(claudeBin, args, {
     cwd: expandTilde(cwd) || process.cwd(),
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
