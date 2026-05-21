@@ -73,8 +73,11 @@ function handle(msg) {
   }
   if (type === 'cancel') {
     const entry = inflight.get(msg.targetId);
-    if (entry && entry.proc) {
-      try { entry.proc.kill('SIGTERM'); } catch {}
+    if (entry) {
+      entry.cancelled = true;
+      if (entry.proc) {
+        try { entry.proc.kill('SIGTERM'); } catch {}
+      }
     }
     writeMessage({ id, type: 'ok' });
     return;
@@ -167,7 +170,13 @@ async function handleSend(msg) {
 
   proc.on('exit', (code, signal) => {
     logErr(`claude ${sessionId.slice(0, 8)} exit code=${code} signal=${signal} stderr=${stderrBuf.length}`);
-    if (code !== 0 && code !== null && inflight.has(id)) {
+    const entry = inflight.get(id);
+    if (entry?.cancelled || (signal && code === null)) {
+      // Signal-kill (user-initiated cancel or process killed externally).
+      // Synthesize a 'done' so the side panel finalizes the bubble cleanly
+      // instead of leaving its thinking-dots animating forever.
+      if (inflight.has(id)) writeMessage({ id, type: 'done', sessionId });
+    } else if (code !== 0 && code !== null && inflight.has(id)) {
       writeMessage({ id, type: 'error', message: `claude exited (code=${code}): ${stderrBuf.slice(-400) || '(no stderr)'}` });
     }
     cleanupImagePaths(imagePaths);
