@@ -371,6 +371,14 @@ function finalizeBubble(bubble) {
     bubble.classList.remove('thinking');
     bubble.textContent = '(no response)';
   }
+
+  if (bubble && !bubble.dataset.footerAdded) {
+    const footer = document.createElement('div');
+    footer.className = 'assistant-footer';
+    footer.textContent = 'AI output — verify independently.';
+    bubble.appendChild(footer);
+    bubble.dataset.footerAdded = '1';
+  }
 }
 
 function scrollHistory() {
