@@ -41,7 +41,12 @@ export async function parseStream(readable, emitter) {
 }
 
 export function runClaude({ sessionId, isNew, message, cwd, extraDirs, systemPrompt }) {
-  const args = ['-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'];
+  // --verbose was previously included for stream-json diagnostics, but it
+  // also dumps `system` and `stream_event` lifecycle entries that parseStream
+  // discards anyway — pure JSON-parse cost per send. --include-partial-messages
+  // continues to give us incremental assistant events, so streaming feel is
+  // unchanged.
+  const args = ['-p', '--output-format', 'stream-json', '--include-partial-messages'];
   if (isNew) {
     args.push('--session-id', sessionId);
   } else {

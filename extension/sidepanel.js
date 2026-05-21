@@ -666,13 +666,33 @@ function ensureContentDiv(bubble) {
   return content;
 }
 
-function appendAssistantDelta(bubble, text) {
-  const content = ensureContentDiv(bubble);
-  const prev = bubble.dataset.rawMd || '';
-  const next = prev + text;
-  bubble.dataset.rawMd = next;
-  content.innerHTML = marked.parse(next);
+// marked.parse is O(buffer.length) — re-running it on every delta scales
+// poorly past ~5KB. Coalesce repaints onto a single rAF tick: the buffer
+// keeps growing immediately, but innerHTML is rewritten at most once per
+// animation frame (~60Hz). User-visible streaming feel is preserved.
+const pendingRender = new Set();
+let renderScheduled = false;
+function flushPendingRenders() {
+  renderScheduled = false;
+  for (const bubble of pendingRender) {
+    if (!bubble.isConnected) continue; // Stop removed it before rAF fired
+    const content = bubble.querySelector('.msg-content');
+    if (!content) continue;
+    content.innerHTML = marked.parse(bubble.dataset.rawMd || '');
+  }
+  pendingRender.clear();
   scrollHistory();
+}
+
+function appendAssistantDelta(bubble, text) {
+  ensureContentDiv(bubble);
+  const prev = bubble.dataset.rawMd || '';
+  bubble.dataset.rawMd = prev + text;
+  pendingRender.add(bubble);
+  if (!renderScheduled) {
+    renderScheduled = true;
+    requestAnimationFrame(flushPendingRenders);
+  }
 }
 
 function finalizeBubble(bubble) {
