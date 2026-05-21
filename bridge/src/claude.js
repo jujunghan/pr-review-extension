@@ -40,12 +40,15 @@ export async function parseStream(readable, emitter) {
   }
 }
 
-export function runClaude({ sessionId, isNew, message, cwd }) {
+export function runClaude({ sessionId, isNew, message, cwd, extraDirs }) {
   const args = ['-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'];
   if (isNew) {
     args.push('--session-id', sessionId);
   } else {
     args.push('--resume', sessionId);
+  }
+  if (Array.isArray(extraDirs) && extraDirs.length > 0) {
+    args.push('--add-dir', ...extraDirs);
   }
   args.push(message);
   const env = { ...process.env };

@@ -3,6 +3,9 @@ const $ = (sel) => document.querySelector(sel);
 let currentPrUrl = null;
 let currentSelection = null;
 let nextStreamId = 1;
+// Pasted images attached to the next send. Cleared after send dispatches.
+// Each entry: { dataUrl, mimeType, name }
+const pendingImages = [];
 // streamId → assistant bubble element. Each send gets its own bubble so the
 // user can ask follow-ups before the previous answer finishes streaming
 // without freezing the older bubble in thinking state.
@@ -284,6 +287,22 @@ function renderEmptyState() {
 }
 
 function handlePaste(e) {
+  // Image branch: capture any image/* items into pendingImages
+  const items = e.clipboardData?.items || [];
+  const imageItems = [];
+  for (const it of items) {
+    if (it.kind === 'file' && it.type.startsWith('image/')) {
+      const blob = it.getAsFile();
+      if (blob) imageItems.push(blob);
+    }
+  }
+  if (imageItems.length > 0) {
+    e.preventDefault();
+    for (const blob of imageItems) attachImageBlob(blob);
+    return;
+  }
+
+  // Text branch (long paste collapse)
   const text = e.clipboardData?.getData('text');
   if (!text) return;
   const lineCount = text.split('\n').length;
@@ -295,6 +314,65 @@ function handlePaste(e) {
   pasteRegistry.set(id, text);
   const placeholder = `[Pasted text #${id} — ${lineCount} lines]`;
   insertAtCursor(e.target, placeholder);
+}
+
+function attachImageBlob(blob) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    pendingImages.push({
+      dataUrl,
+      mimeType: blob.type || 'image/png',
+      name: blob.name || `pasted-${Date.now()}.${guessExt(blob.type)}`,
+    });
+    renderPendingImages();
+  };
+  reader.readAsDataURL(blob);
+}
+
+function guessExt(mime) {
+  if (!mime) return 'png';
+  if (mime.includes('jpeg') || mime.includes('jpg')) return 'jpg';
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('gif')) return 'gif';
+  if (mime.includes('webp')) return 'webp';
+  return 'bin';
+}
+
+function renderPendingImages() {
+  let el = document.getElementById('pending-images');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'pending-images';
+    el.className = 'pending-images';
+    const ctx = document.getElementById('context-preview');
+    ctx.insertAdjacentElement('afterend', el);
+  }
+  el.innerHTML = '';
+  if (pendingImages.length === 0) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  for (const [idx, img] of pendingImages.entries()) {
+    const chip = document.createElement('div');
+    chip.className = 'image-chip';
+    const thumb = document.createElement('img');
+    thumb.src = img.dataUrl;
+    thumb.alt = img.name;
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'image-chip-remove';
+    x.textContent = '×';
+    x.title = 'Remove image';
+    x.addEventListener('click', () => {
+      pendingImages.splice(idx, 1);
+      renderPendingImages();
+    });
+    chip.appendChild(thumb);
+    chip.appendChild(x);
+    el.appendChild(chip);
+  }
 }
 
 function insertAtCursor(textarea, text) {
@@ -356,10 +434,13 @@ async function send() {
     lines: currentSelection?.lines,
     code: currentSelection?.text,
     question: expandedQuestion,
+    images: pendingImages.map((img) => ({ dataUrl: img.dataUrl, mimeType: img.mimeType, name: img.name })),
   };
-  // Reset selection after attaching once
+  // Reset selection + images after attaching once
   currentSelection = null;
   renderContextPreview();
+  pendingImages.length = 0;
+  renderPendingImages();
 
   const streamId = nextStreamId++;
   activeStreams.set(streamId, bubble);

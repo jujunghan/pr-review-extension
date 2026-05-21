@@ -11,11 +11,17 @@
 //   { id, type: 'ok' }                  // health / clear ack
 
 import { EventEmitter } from 'node:events';
+import { writeFileSync, unlinkSync, mkdirSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { parseStream, runClaude } from './src/claude.js';
 import { createSessionStore } from './src/sessions.js';
 
 const sessions = createSessionStore();
 const inflight = new Map(); // id -> { proc }
+const TMP_DIR = join(tmpdir(), 'pr-review-images');
+if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
 function writeMessage(obj) {
   const buf = Buffer.from(JSON.stringify(obj), 'utf8');
@@ -81,8 +87,34 @@ function pickFence(code) {
   return '`'.repeat(Math.max(3, longest + 1));
 }
 
+function saveAttachedImages(images) {
+  if (!Array.isArray(images) || images.length === 0) return { paths: [] };
+  const paths = [];
+  for (const img of images) {
+    const m = /^data:([^;]+);base64,(.+)$/.exec(img.dataUrl || '');
+    if (!m) continue;
+    const mime = m[1];
+    const ext = mime.split('/')[1] || 'bin';
+    const filename = `${randomUUID()}.${ext}`;
+    const fullPath = join(TMP_DIR, filename);
+    try {
+      writeFileSync(fullPath, Buffer.from(m[2], 'base64'));
+      paths.push(fullPath);
+    } catch (err) {
+      logErr('failed to write image:', err.message);
+    }
+  }
+  return { paths };
+}
+
+function cleanupImagePaths(paths) {
+  for (const p of paths) {
+    try { unlinkSync(p); } catch {}
+  }
+}
+
 async function handleSend(msg) {
-  const { id, prUrl, file, lines, code, question, cwd } = msg;
+  const { id, prUrl, file, lines, code, question, cwd, images } = msg;
   if (!prUrl || !question) {
     writeMessage({ id, type: 'error', message: 'prUrl and question required' });
     return;
@@ -90,16 +122,26 @@ async function handleSend(msg) {
 
   const isNew = !sessions.has(prUrl);
   const sessionId = sessions.getOrCreate(prUrl);
-  const formatted = formatMessage({ file, lines, code, question });
+  let formatted = formatMessage({ file, lines, code, question });
+
+  // Save any pasted images to a tmp dir; prepend their paths to the
+  // user message so claude's Read tool can open them. Cleaned up on
+  // proc exit and the OS sweeps $TMPDIR on its own schedule too.
+  const { paths: imagePaths } = saveAttachedImages(images);
+  if (imagePaths.length > 0) {
+    const lines = imagePaths.map((p) => `- ${p}`).join('\n');
+    formatted = `Attached images (use Read tool to view):\n${lines}\n\n${formatted}`;
+  }
 
   let proc;
   try {
-    proc = runClaude({ sessionId, isNew, message: formatted, cwd });
+    proc = runClaude({ sessionId, isNew, message: formatted, cwd, extraDirs: imagePaths.length > 0 ? [TMP_DIR] : undefined });
   } catch (err) {
+    cleanupImagePaths(imagePaths);
     writeMessage({ id, type: 'error', message: err.message });
     return;
   }
-  inflight.set(id, { proc });
+  inflight.set(id, { proc, imagePaths });
 
   let stderrBuf = '';
   proc.stderr?.on('data', (chunk) => {
@@ -120,6 +162,7 @@ async function handleSend(msg) {
     if (code !== 0 && code !== null && inflight.has(id)) {
       writeMessage({ id, type: 'error', message: `claude exited (code=${code}): ${stderrBuf.slice(-400) || '(no stderr)'}` });
     }
+    cleanupImagePaths(imagePaths);
     inflight.delete(id);
   });
 
