@@ -189,7 +189,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'send') {
       // streaming send: the sender supplies a streamId so we route deltas
       // back via broadcast (sidepanel) or tab message (content script).
-      const { streamId, target, prUrl, file, lines, code, question } = msg;
+      const { streamId, target, prUrl, file, lines, code, question, images } = msg;
       const cwd = await lookupRepoPath(prUrl);
       const replyTo = (payload) => {
         const kind = payload.delta != null ? 'delta' : (payload.done ? 'done' : (payload.error ? 'error' : '?'));
@@ -211,7 +211,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         diffAttached.add(prUrl);
       }
 
-      nativeSend({ type: 'send', prUrl, file, lines, code, question: finalQuestion, cwd }, {
+      nativeSend({ type: 'send', prUrl, file, lines, code, question: finalQuestion, cwd, images }, {
         onDelta: (text) => replyTo({ delta: text }),
         onDone: (sessionId) => replyTo({ done: true, sessionId }),
         onError: (message) => replyTo({ error: message }),
