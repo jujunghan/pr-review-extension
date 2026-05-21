@@ -15,6 +15,11 @@ export function createSessionStore() {
       }
       return id;
     },
+    set(prUrl, id) {
+      if (typeof prUrl !== 'string' || !prUrl) throw new TypeError('prUrl must be a non-empty string');
+      if (typeof id !== 'string' || !id) throw new TypeError('id must be a non-empty string');
+      map.set(prUrl, id);
+    },
     has(prUrl) {
       return map.has(prUrl);
     },

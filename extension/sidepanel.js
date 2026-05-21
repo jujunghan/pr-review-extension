@@ -186,6 +186,12 @@ async function maybeShowFirstRunBanner() {
   });
 }
 
+function refreshResumeBanner(hasStoredSession) {
+  const banner = document.getElementById('resume-banner');
+  if (!banner) return;
+  banner.hidden = !hasStoredSession;
+}
+
 function refreshStopButton() {
   const btn = document.getElementById('stop-btn');
   if (!btn) return;
@@ -222,6 +228,7 @@ async function init() {
 
   const state = await chrome.runtime.sendMessage({ type: 'getState' });
   setPrUrl(state?.prUrl || null);
+  refreshResumeBanner(!!state?.hasStoredSession);
   if (state?.prUrl) {
     const ds = await chrome.runtime.sendMessage({ type: 'getDiffStatus', prUrl: state.prUrl });
     renderDiffStatus(ds?.status);
@@ -234,6 +241,7 @@ async function init() {
       setPrUrl(msg.prUrl);
       if (changed) clearHistoryUI();
       refreshRepoPathBanner(msg.prUrl);
+      refreshResumeBanner(!!msg.hasStoredSession);
     }
     if (msg.type === 'selectionChanged') {
       currentSelection = { file: msg.file, lines: msg.lines, text: msg.text };
@@ -287,9 +295,17 @@ async function init() {
   input.addEventListener('paste', handlePaste);
   input.addEventListener('input', resetPasteRegistryIfEmpty);
 
+  document.getElementById('resume-fresh').addEventListener('click', async () => {
+    await chrome.runtime.sendMessage({ type: 'clearContext' });
+    clearHistoryUI();
+    refreshResumeBanner(false);
+    setStatus('Started fresh session.');
+  });
+
   $('#clear-btn').addEventListener('click', () => {
     chrome.runtime.sendMessage({ type: 'clearContext' });
     clearHistoryUI();
+    refreshResumeBanner(false);
     setStatus('Context cleared.');
   });
 

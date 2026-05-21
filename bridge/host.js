@@ -125,12 +125,18 @@ function cleanupImagePaths(paths) {
 }
 
 async function handleSend(msg) {
-  const { id, prUrl, file, lines, code, question, cwd, images } = msg;
+  const { id, prUrl, file, lines, code, question, cwd, images, resumeSessionId } = msg;
   if (!prUrl || !question) {
     writeMessage({ id, type: 'error', message: 'prUrl and question required' });
     return;
   }
 
+  // If background passed a resumeSessionId, that's the persisted mapping
+  // from chrome.storage.local — pre-seed it so getOrCreate returns it and
+  // isNew is false (→ claude --resume instead of --session-id).
+  if (resumeSessionId && typeof resumeSessionId === 'string') {
+    sessions.set(prUrl, resumeSessionId);
+  }
   const isNew = !sessions.has(prUrl);
   const sessionId = sessions.getOrCreate(prUrl);
   let formatted = formatMessage({ file, lines, code, question });

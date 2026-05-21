@@ -39,3 +39,19 @@ test('has(url) reflects existence', () => {
   store.getOrCreate('https://github.com/owner/repo/pull/1');
   assert.equal(store.has('https://github.com/owner/repo/pull/1'), true);
 });
+
+test('set(prUrl, id) stores the id and getOrCreate returns it', () => {
+  const store = createSessionStore();
+  const id = '11111111-2222-3333-4444-555555555555';
+  store.set('https://github.com/owner/repo/pull/1', id);
+  assert.equal(store.has('https://github.com/owner/repo/pull/1'), true);
+  assert.equal(store.getOrCreate('https://github.com/owner/repo/pull/1'), id);
+});
+
+test('set throws on non-string or empty inputs', () => {
+  const store = createSessionStore();
+  assert.throws(() => store.set('', 'abc'), TypeError);
+  assert.throws(() => store.set('url', ''), TypeError);
+  assert.throws(() => store.set(null, 'abc'), TypeError);
+  assert.throws(() => store.set('url', 123), TypeError);
+});

@@ -21,6 +21,35 @@ const diffStatus = new Map();
 // prUrl set: whose diff has already been attached as the first user turn
 const diffAttached = new Set();
 
+// prUrl -> sessionId, persisted in chrome.storage.local under 'prSessions'.
+// Lets us pass resumeSessionId to the host so claude --resume picks up the
+// previous turn-history from its own jsonl on the next send.
+const prSessions = new Map();
+const prSessionsReady = (async () => {
+  const data = await chrome.storage.local.get('prSessions');
+  const stored = data.prSessions || {};
+  for (const [k, v] of Object.entries(stored)) prSessions.set(k, v);
+})();
+
+async function persistSession(prUrl, sessionId) {
+  if (!prUrl || !sessionId) return;
+  if (prSessions.get(prUrl) === sessionId) return;
+  prSessions.set(prUrl, sessionId);
+  const data = await chrome.storage.local.get('prSessions');
+  const stored = data.prSessions || {};
+  stored[prUrl] = sessionId;
+  await chrome.storage.local.set({ prSessions: stored });
+}
+
+async function forgetSession(prUrl) {
+  if (!prUrl) return;
+  prSessions.delete(prUrl);
+  const data = await chrome.storage.local.get('prSessions');
+  const stored = data.prSessions || {};
+  delete stored[prUrl];
+  await chrome.storage.local.set({ prSessions: stored });
+}
+
 function routeIncoming(msg) {
   console.log('[PR Review BG] port recv', msg.type, 'id=', msg.id,
     msg.type === 'delta' ? `text.len=${msg.text?.length}` : '');
@@ -102,14 +131,21 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     if (msg.type === 'prUrlChanged') {
+      await prSessionsReady;
       const prev = activePrUrl;
       activePrUrl = msg.prUrl || null;
       if (prev && prev !== activePrUrl) {
         nativeSend({ type: 'clear', prUrl: prev }, {});
         diffAttached.delete(prev);
         diffAttached.delete(`${prev}#ghostwrite`);
+        // Intentionally do NOT forgetSession(prev) — we want the user to
+        // be able to come back to that PR later and resume from storage.
       }
-      broadcast({ type: 'prUrlChanged', prUrl: activePrUrl });
+      broadcast({
+        type: 'prUrlChanged',
+        prUrl: activePrUrl,
+        hasStoredSession: activePrUrl ? prSessions.has(activePrUrl) : false,
+      });
       // Re-send the diff status for the new PR so the sidepanel can show it
       if (activePrUrl && diffStatus.has(activePrUrl)) {
         broadcast({ type: 'diffStatus', prUrl: activePrUrl, status: diffStatus.get(activePrUrl) });
@@ -123,13 +159,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return;
     }
     if (msg.type === 'getState') {
-      sendResponse({ prUrl: activePrUrl });
+      await prSessionsReady;
+      sendResponse({
+        prUrl: activePrUrl,
+        hasStoredSession: activePrUrl ? prSessions.has(activePrUrl) : false,
+      });
       return;
     }
     if (msg.type === 'clearContext') {
       if (activePrUrl) {
         nativeSend({ type: 'clear', prUrl: activePrUrl }, {});
         diffAttached.delete(activePrUrl);
+        await forgetSession(activePrUrl);
       }
       sendResponse({ ok: true });
       return;
@@ -197,10 +238,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return;
     }
     if (msg.type === 'send') {
+      await prSessionsReady;
       // streaming send: the sender supplies a streamId so we route deltas
       // back via broadcast (sidepanel) or tab message (content script).
       const { streamId, target, prUrl, file, lines, code, question, images } = msg;
       const cwd = await lookupRepoPath(prUrl);
+      const resumeSessionId = prSessions.get(prUrl) || null;
       const replyTo = (payload) => {
         const kind = payload.delta != null ? 'delta' : (payload.done ? 'done' : (payload.error ? 'error' : '?'));
         console.log('[PR Review BG] replyTo', target || 'broadcast', 'streamId=', streamId, kind, payload.delta?.length || '');
@@ -215,17 +258,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // has the whole PR as context from the start.
       let finalQuestion = question;
       const cacheKey = prUrl?.split('#')[0]; // strip #ghostwrite etc.
-      if (cacheKey && !diffAttached.has(prUrl) && diffCache.has(cacheKey)) {
+      // Skip diff prepend on resume — claude already has it from the
+      // session's prior turn-history.
+      if (!resumeSessionId && cacheKey && !diffAttached.has(prUrl) && diffCache.has(cacheKey)) {
         const diff = diffCache.get(cacheKey);
         finalQuestion = `PR diff (review context):\n\`\`\`diff\n${diff}\n\`\`\`\n\n${question}`;
         diffAttached.add(prUrl);
       }
 
-      const backendId = nativeSend({ type: 'send', prUrl, file, lines, code, question: finalQuestion, cwd, images }, {
-        onDelta: (text) => replyTo({ delta: text }),
-        onDone: (sessionId) => { streamIdToBackendId.delete(streamId); replyTo({ done: true, sessionId }); },
-        onError: (message) => { streamIdToBackendId.delete(streamId); replyTo({ error: message }); },
-      });
+      const backendId = nativeSend(
+        { type: 'send', prUrl, file, lines, code, question: finalQuestion, cwd, images, resumeSessionId },
+        {
+          onDelta: (text) => replyTo({ delta: text }),
+          onDone: (sessionId) => {
+            if (sessionId) persistSession(prUrl, sessionId);
+            streamIdToBackendId.delete(streamId);
+            replyTo({ done: true, sessionId });
+          },
+          onError: (message) => { streamIdToBackendId.delete(streamId); replyTo({ error: message }); },
+        }
+      );
       if (backendId != null) streamIdToBackendId.set(streamId, backendId);
       sendResponse({ ok: true });
       return;
