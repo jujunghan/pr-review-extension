@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 // Installs the Chrome native messaging host manifest so the extension
-// (identified by --ext-id) can spawn bridge/host.js.
+// (identified by --ext-id, $PR_REVIEW_EXT_ID, or the built-in production
+// default) can spawn bridge/host.js.
 //
-// Usage: npm run install-host -- --ext-id <EXTENSION_ID>
+// Usage:
+//   npm run install-host                          # uses DEFAULT_PROD_EXT_ID
+//   npm run install-host -- --ext-id <ID>         # dev override
+//   PR_REVIEW_EXT_ID=<ID> npm run install-host    # CI / scripted override
 //
 // Manifest destination depends on the OS and browser:
 //   macOS Chrome   ~/Library/Application Support/Google/Chrome/NativeMessagingHosts
@@ -17,16 +21,55 @@ import { execSync } from 'node:child_process';
 
 const HOST_NAME = 'com.pr_review.bridge';
 
-const args = process.argv.slice(2);
-function arg(name) {
-  const i = args.indexOf(`--${name}`);
-  return i >= 0 ? args[i + 1] : undefined;
+// IMPORTANT: this placeholder is replaced with the real CWS-assigned
+// production extension ID in a follow-up commit after the first CWS
+// submission (P3 of docs/superpowers/specs/2026-05-21-pr-review-public-launch-design.md).
+// Until then, end users must pass --ext-id or set PR_REVIEW_EXT_ID. Do not
+// hard-code a real ID here as part of P0.
+export const DEFAULT_PROD_EXT_ID = 'PLACEHOLDER_UNTIL_CWS_SUBMISSION';
+
+const EXT_ID_RE = /^[a-p]{32}$/;
+
+function readFlag(argv, name) {
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 ? argv[i + 1] : undefined;
 }
 
-const extId = arg('ext-id');
-if (!extId || !/^[a-p]{32}$/.test(extId)) {
-  console.error('Error: pass --ext-id <32-char extension id>');
-  console.error('Find it in chrome://extensions (Developer mode).');
+export function resolveExtId({ argv, env, defaultId }) {
+  const flag = readFlag(argv, 'ext-id');
+  if (flag !== undefined) {
+    return EXT_ID_RE.test(flag) ? flag : null;
+  }
+  const envId = env.PR_REVIEW_EXT_ID;
+  if (envId && EXT_ID_RE.test(envId)) return envId;
+  if (defaultId && EXT_ID_RE.test(defaultId)) return defaultId;
+  return null;
+}
+
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  return resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+}
+
+if (!isMainModule()) {
+  // When imported (e.g. tests), stop here — do not run the installer.
+} else {
+
+const args = process.argv.slice(2);
+
+function arg(name) { return readFlag(args, name); }
+
+const extId = resolveExtId({
+  argv: args,
+  env: process.env,
+  defaultId: DEFAULT_PROD_EXT_ID,
+});
+
+if (!extId) {
+  console.error('Error: could not resolve a valid extension ID.');
+  console.error('Pass --ext-id <32-char id>, set PR_REVIEW_EXT_ID, or wait');
+  console.error('for the published version where DEFAULT_PROD_EXT_ID is set.');
+  console.error('Find your ID in chrome://extensions (Developer mode).');
   process.exit(1);
 }
 
@@ -123,3 +166,4 @@ console.log(`Node: ${nodeBin}`);
 if (claudeBin) console.log(`Claude: ${claudeBin}`);
 console.log(`Host stderr is appended to \${TMPDIR:-/tmp}/pr-review-host.log`);
 console.log(`Reload the extension in chrome://extensions to pick up the new host.`);
+}
