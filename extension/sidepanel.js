@@ -86,17 +86,8 @@ function wireOnboardingControls() {
     flashRetryStatus('Copied commands');
   });
 
-  document.getElementById('retry-host').addEventListener('click', async () => {
-    flashRetryStatus('Testing…');
-    const res = await chrome.runtime.sendMessage({ type: 'getHostStatus' });
-    if (res?.status === 'ready') {
-      hideOnboarding();
-      flashRetryStatus('Connected');
-    } else if (res?.status === 'probing') {
-      flashRetryStatus('Probing — give it a second, then click again');
-    } else {
-      flashRetryStatus('Still missing. Did you reload the extension?');
-    }
+  document.getElementById('retry-host').addEventListener('click', () => {
+    startRetryPoll();
   });
 }
 
@@ -106,6 +97,42 @@ function flashRetryStatus(text) {
   el.textContent = text;
   clearTimeout(flashRetryStatus._t);
   flashRetryStatus._t = setTimeout(() => { el.textContent = ''; }, 4000);
+}
+
+const RETRY_POLL_MAX = 6;
+const RETRY_POLL_INTERVAL_MS = 3000;
+let retryPollTimer = null;
+let retryPollCount = 0;
+
+function stopRetryPoll() {
+  if (retryPollTimer) {
+    clearTimeout(retryPollTimer);
+    retryPollTimer = null;
+  }
+}
+
+function startRetryPoll() {
+  stopRetryPoll();
+  retryPollCount = 0;
+  pollHostOnce();
+}
+
+async function pollHostOnce() {
+  retryPollCount += 1;
+  flashRetryStatus(`Checking… (${retryPollCount}/${RETRY_POLL_MAX})`);
+  const res = await chrome.runtime.sendMessage({ type: 'getHostStatus' });
+  if (res?.status === 'ready') {
+    stopRetryPoll();
+    hideOnboarding();
+    flashRetryStatus('Connected');
+    return;
+  }
+  if (retryPollCount >= RETRY_POLL_MAX) {
+    stopRetryPoll();
+    flashRetryStatus('Still missing. Did you run all install steps and reload the extension in chrome://extensions?');
+    return;
+  }
+  retryPollTimer = setTimeout(pollHostOnce, RETRY_POLL_INTERVAL_MS);
 }
 
 async function maybeShowFirstRunBanner() {
@@ -176,6 +203,7 @@ async function init() {
       if (msg.status === 'missing') {
         showOnboarding(chrome.runtime.id);
       } else if (msg.status === 'ready') {
+        stopRetryPoll();
         hideOnboarding();
         maybeShowFirstRunBanner();
       }
