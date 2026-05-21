@@ -21,8 +21,6 @@ const diffStatus = new Map();
 // prUrl set: whose diff has already been attached as the first user turn
 const diffAttached = new Set();
 
-let lastHostError = '';
-
 function routeIncoming(msg) {
   console.log('[PR Review BG] port recv', msg.type, 'id=', msg.id,
     msg.type === 'delta' ? `text.len=${msg.text?.length}` : '');
@@ -39,7 +37,6 @@ function routeIncoming(msg) {
 
 function handleDisconnect() {
   const err = chrome.runtime.lastError?.message || 'Native host disconnected';
-  lastHostError = err;
   console.warn('[PR Review BG] port disconnect:', err, 'pending=', pending.size);
   const toRetry = [];
   for (const [, handler] of pending) {
@@ -64,7 +61,6 @@ function ensurePort() {
     port = chrome.runtime.connectNative(NATIVE_HOST);
   } catch (err) {
     port = null;
-    lastHostError = err?.message || 'connectNative threw';
     return null;
   }
   port.onMessage.addListener(routeIncoming);
