@@ -62,6 +62,7 @@ function routeIncoming(msg) {
   else if (msg.type === 'done') { handler.onDone?.(msg.sessionId); pending.delete(msg.id); }
   else if (msg.type === 'error') { handler.onError?.(msg.message); pending.delete(msg.id); }
   else if (msg.type === 'ok') { handler.onDone?.(); pending.delete(msg.id); }
+  else if (msg.type === 'commands') { handler.onCommands?.(msg.commands || []); pending.delete(msg.id); }
 }
 
 function handleDisconnect() {
@@ -299,6 +300,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
       return;
     }
+    if (msg.type === 'getSlashCommands') {
+      const commands = await getSlashCommandsCached();
+      sendResponse({ commands });
+      return;
+    }
     sendResponse({ ok: false, error: 'unknown message' });
   })();
   return true;
@@ -349,4 +355,38 @@ function probeHostStatus() {
   } catch {
     return 'missing';
   }
+}
+
+// Slash-command list — fetched once per service-worker life from the host
+// and cached in memory. Service-worker termination clears it, which is fine:
+// the next caller refetches.
+let slashCommandsCache = null;
+let slashCommandsPromise = null;
+function getSlashCommandsCached() {
+  if (slashCommandsCache) return Promise.resolve(slashCommandsCache);
+  if (slashCommandsPromise) return slashCommandsPromise;
+  slashCommandsPromise = new Promise((resolve) => {
+    let settled = false;
+    const handlerId = nativeSend({ type: 'listCommands' }, {
+      onCommands: (cmds) => {
+        if (settled) return;
+        settled = true;
+        slashCommandsCache = Array.isArray(cmds) ? cmds : [];
+        slashCommandsPromise = null;
+        resolve(slashCommandsCache);
+      },
+      onError: () => {
+        if (settled) return;
+        settled = true;
+        slashCommandsPromise = null;
+        resolve([]);
+      },
+    });
+    if (handlerId == null) {
+      settled = true;
+      slashCommandsPromise = null;
+      resolve([]);
+    }
+  });
+  return slashCommandsPromise;
 }

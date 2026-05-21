@@ -11,9 +11,9 @@
 //   { id, type: 'ok' }                  // health / clear ack
 
 import { EventEmitter } from 'node:events';
-import { writeFileSync, unlinkSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, unlinkSync, mkdirSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseStream, runClaude } from './src/claude.js';
 import { createSessionStore } from './src/sessions.js';
@@ -82,7 +82,109 @@ function handle(msg) {
     writeMessage({ id, type: 'ok' });
     return;
   }
+  if (type === 'listCommands') {
+    try {
+      const commands = listSlashCommands();
+      writeMessage({ id, type: 'commands', commands });
+    } catch (err) {
+      writeMessage({ id, type: 'error', message: err.message });
+    }
+    return;
+  }
   writeMessage({ id, type: 'error', message: `unknown type: ${type}` });
+}
+
+const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---/;
+function parseFrontmatter(text) {
+  const m = FRONTMATTER_RE.exec(text);
+  if (!m) return {};
+  const out = {};
+  for (const line of m[1].split('\n')) {
+    const eq = line.indexOf(':');
+    if (eq < 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (!/^[a-zA-Z_][\w-]*$/.test(key)) continue;
+    let val = line.slice(eq + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    out[key] = val;
+  }
+  return out;
+}
+
+function readMarkdownMeta(filePath, fallbackName) {
+  try {
+    const fd = readFileSync(filePath, { encoding: 'utf8', flag: 'r' }).slice(0, 4096);
+    const meta = parseFrontmatter(fd);
+    return {
+      name: meta.name || fallbackName,
+      description: meta.description || '',
+    };
+  } catch {
+    return { name: fallbackName, description: '' };
+  }
+}
+
+function walkDir(root, depthLimit, onFile) {
+  let stack = [{ path: root, depth: 0 }];
+  while (stack.length) {
+    const { path: dir, depth } = stack.pop();
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); }
+    catch { continue; }
+    for (const ent of entries) {
+      const p = join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (depth < depthLimit) stack.push({ path: p, depth: depth + 1 });
+      } else if (ent.isFile()) {
+        onFile(p, depth);
+      }
+    }
+  }
+}
+
+function listSlashCommands() {
+  const home = process.env.HOME;
+  if (!home) return [];
+
+  const seen = new Set();
+  const out = [];
+  function push(meta, source) {
+    if (!meta.name) return;
+    if (seen.has(meta.name)) return;
+    seen.add(meta.name);
+    out.push({ name: meta.name, description: meta.description, source });
+  }
+
+  // 1) ~/.claude/skills/<name>/SKILL.md
+  try {
+    const skillsRoot = join(home, '.claude', 'skills');
+    for (const ent of readdirSync(skillsRoot, { withFileTypes: true })) {
+      if (!ent.isDirectory()) continue;
+      const filePath = join(skillsRoot, ent.name, 'SKILL.md');
+      try {
+        statSync(filePath);
+        push(readMarkdownMeta(filePath, ent.name), 'user');
+      } catch {}
+    }
+  } catch {}
+
+  // 2) ~/.claude/plugins/**/commands/*.md and 3) ~/.claude/plugins/**/skills/*/SKILL.md
+  const pluginsRoot = join(home, '.claude', 'plugins');
+  walkDir(pluginsRoot, 8, (filePath) => {
+    const fname = basename(filePath);
+    const parentDir = basename(dirname(filePath));
+    const grandDir = basename(dirname(dirname(filePath)));
+    if (fname === 'SKILL.md' && grandDir === 'skills') {
+      push(readMarkdownMeta(filePath, parentDir), 'plugin');
+    } else if (fname.endsWith('.md') && parentDir === 'commands') {
+      push(readMarkdownMeta(filePath, fname.replace(/\.md$/, '')), 'plugin');
+    }
+  });
+
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
 }
 
 function formatMessage({ file, lines, code, question }) {

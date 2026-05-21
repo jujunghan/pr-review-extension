@@ -199,6 +199,127 @@ function refreshStopButton() {
   btn.hidden = activeStreams.size === 0;
 }
 
+// ============ Slash-command autocomplete ============
+const SLASH_MAX = 4;
+let slashCommandsAll = null;       // null = not loaded yet; [] = loaded, no entries
+let slashLoadingPromise = null;
+let slashActive = false;
+let slashItems = [];
+let slashHighlight = 0;
+
+async function ensureSlashCommandsLoaded() {
+  if (slashCommandsAll != null) return slashCommandsAll;
+  if (slashLoadingPromise) return slashLoadingPromise;
+  slashLoadingPromise = (async () => {
+    const res = await chrome.runtime.sendMessage({ type: 'getSlashCommands' });
+    slashCommandsAll = Array.isArray(res?.commands) ? res.commands : [];
+    slashLoadingPromise = null;
+    return slashCommandsAll;
+  })();
+  return slashLoadingPromise;
+}
+
+function filterSlashCommands(query) {
+  if (!slashCommandsAll) return [];
+  const q = (query || '').toLowerCase();
+  const matches = [];
+  for (const cmd of slashCommandsAll) {
+    const name = (cmd.name || '').toLowerCase();
+    if (!q) { matches.push({ cmd, rank: 1 }); }
+    else if (name.startsWith(q)) { matches.push({ cmd, rank: 0 }); }
+    else if (name.includes(q)) { matches.push({ cmd, rank: 1 }); }
+    else continue;
+  }
+  matches.sort((a, b) => a.rank - b.rank || a.cmd.name.localeCompare(b.cmd.name));
+  return matches.slice(0, SLASH_MAX).map((m) => m.cmd);
+}
+
+function renderSlashDropdown() {
+  const el = document.getElementById('slash-dropdown');
+  if (!el) return;
+  if (!slashActive) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = '';
+  if (slashItems.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'slash-empty';
+    empty.textContent = slashCommandsAll == null ? 'Loading commands…' : 'No matching commands.';
+    el.appendChild(empty);
+    return;
+  }
+  for (let i = 0; i < slashItems.length; i += 1) {
+    const cmd = slashItems[i];
+    const item = document.createElement('div');
+    item.className = 'slash-item' + (i === slashHighlight ? ' is-active' : '');
+    item.setAttribute('role', 'option');
+    item.dataset.idx = String(i);
+    const name = document.createElement('div');
+    name.className = 'slash-item-name';
+    name.textContent = '/' + cmd.name;
+    item.appendChild(name);
+    if (cmd.description) {
+      const desc = document.createElement('div');
+      desc.className = 'slash-item-desc';
+      desc.textContent = cmd.description;
+      item.appendChild(desc);
+    }
+    item.addEventListener('mousedown', (ev) => {
+      // mousedown (not click) so the focus stays in the textarea — otherwise
+      // the textarea blurs before our click handler fires.
+      ev.preventDefault();
+      acceptSlashItem(i);
+    });
+    el.appendChild(item);
+  }
+}
+
+function getSlashQuery(input) {
+  const v = input.value;
+  if (!v.startsWith('/')) return null;
+  // Only first-token autocomplete: if there's whitespace, we're past the command name.
+  if (/\s/.test(v)) return null;
+  return v.slice(1);
+}
+
+async function maybeOpenSlash(input) {
+  const q = getSlashQuery(input);
+  if (q === null) {
+    if (slashActive) { slashActive = false; renderSlashDropdown(); }
+    return;
+  }
+  if (!slashCommandsAll) {
+    slashActive = true;
+    slashItems = [];
+    renderSlashDropdown();          // shows "Loading commands…"
+    await ensureSlashCommandsLoaded();
+    // Re-derive query in case the user kept typing while we waited.
+    const q2 = getSlashQuery(input);
+    if (q2 === null) { slashActive = false; renderSlashDropdown(); return; }
+    slashItems = filterSlashCommands(q2);
+    slashHighlight = 0;
+    renderSlashDropdown();
+    return;
+  }
+  slashActive = true;
+  slashItems = filterSlashCommands(q);
+  slashHighlight = Math.min(slashHighlight, Math.max(0, slashItems.length - 1));
+  renderSlashDropdown();
+}
+
+function acceptSlashItem(idx) {
+  const input = document.getElementById('input');
+  if (!input) return;
+  const cmd = slashItems[idx];
+  if (!cmd) return;
+  input.value = `/${cmd.name} `;
+  slashActive = false;
+  renderSlashDropdown();
+  input.focus();
+  // Move caret to end
+  const v = input.value;
+  input.setSelectionRange(v.length, v.length);
+}
+
 init();
 
 async function init() {
@@ -285,6 +406,31 @@ async function init() {
 
   const input = $('#input');
   input.addEventListener('keydown', (e) => {
+    if (slashActive && slashItems.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        slashHighlight = (slashHighlight + 1) % slashItems.length;
+        renderSlashDropdown();
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        slashHighlight = (slashHighlight - 1 + slashItems.length) % slashItems.length;
+        renderSlashDropdown();
+        return;
+      }
+      if ((e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) || e.key === 'Tab') {
+        e.preventDefault();
+        acceptSlashItem(slashHighlight);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        slashActive = false;
+        renderSlashDropdown();
+        return;
+      }
+    }
     // e.isComposing covers the IME confirm Enter (Korean/Japanese/Chinese)
     // that would otherwise trigger send() multiple times for a single
     // user Enter press. keyCode 229 is the legacy IME signal.
@@ -295,6 +441,7 @@ async function init() {
   });
   input.addEventListener('paste', handlePaste);
   input.addEventListener('input', resetPasteRegistryIfEmpty);
+  input.addEventListener('input', () => maybeOpenSlash(input));
 
   document.getElementById('resume-fresh').addEventListener('click', async () => {
     await chrome.runtime.sendMessage({ type: 'clearContext' });
@@ -313,6 +460,14 @@ async function init() {
   $('#context-dismiss').addEventListener('click', () => {
     currentSelection = null;
     renderContextPreview();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!slashActive) return;
+    const dropdown = document.getElementById('slash-dropdown');
+    if (e.target === input || (dropdown && dropdown.contains(e.target))) return;
+    slashActive = false;
+    renderSlashDropdown();
   });
 }
 
