@@ -199,6 +199,30 @@ function refreshStopButton() {
   btn.hidden = activeStreams.size === 0;
 }
 
+// ============ Quick-prompt chips ============
+// Click a chip → input is filled with the template. User can edit before sending.
+const QUICK_TEMPLATES = {
+  security: '이 PR의 보안 이슈를 검토해줘: 입력 검증, 인증·인가, 인젝션, 비밀 노출, 외부 입력 신뢰 등 항목별로 구체 line 인용해서.',
+  performance: '이 PR의 성능 문제를 봐줘: N+1 쿼리, 핫 알로케이션, 블로킹 호출, 불필요한 재계산 등 구체적으로.',
+  bugs: '이 PR에서 버그를 찾아줘: off-by-one, race condition, null/undefined, 에러 처리 누락, 엣지 케이스, 잘못된 가정.',
+  improvements: '이 PR을 어떻게 개선할 수 있을까? 가독성, 단순화, 누락된 테스트, 더 적합한 패턴/API — 구체적인 대체 코드까지.',
+};
+
+function wireQuickChips() {
+  const input = document.getElementById('input');
+  if (!input) return;
+  document.querySelectorAll('.quick-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.template;
+      const tpl = QUICK_TEMPLATES[key];
+      if (!tpl) return;
+      input.value = tpl;
+      input.focus();
+      input.setSelectionRange(tpl.length, tpl.length);
+    });
+  });
+}
+
 // ============ Slash-command autocomplete ============
 const SLASH_MAX = 4;
 let slashCommandsAll = null;       // null = not loaded yet; [] = loaded, no entries
@@ -324,6 +348,7 @@ init();
 
 async function init() {
   wireOnboardingControls();
+  wireQuickChips();
 
   document.getElementById('stop-btn').addEventListener('click', async () => {
     // Explicit Stop wipes the user's question and the in-flight assistant

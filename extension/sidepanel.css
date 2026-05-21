@@ -834,6 +834,30 @@ footer {
 }
 .banner-link:hover { color: var(--accent-strong); }
 
+/* Quick-prompt chips — pre-fill the input with a review template */
+.quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 12px 6px;
+}
+.quick-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.quick-chip:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+.quick-chip:active { background: var(--border); }
+
 /* Slash-command autocomplete dropdown */
 .slash-dropdown {
   margin: 0 12px 6px;
