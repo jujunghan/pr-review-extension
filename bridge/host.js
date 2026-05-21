@@ -11,9 +11,10 @@
 //   { id, type: 'ok' }                  // health / clear ack
 
 import { EventEmitter } from 'node:events';
-import { writeFileSync, unlinkSync, mkdirSync, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { writeFileSync, unlinkSync, mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, basename, dirname } from 'node:path';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseStream, runClaude } from './src/claude.js';
 import { createSessionStore } from './src/sessions.js';
@@ -126,62 +127,73 @@ function readMarkdownMeta(filePath, fallbackName) {
   }
 }
 
-function walkDir(root, depthLimit, onFile) {
-  let stack = [{ path: root, depth: 0 }];
-  while (stack.length) {
-    const { path: dir, depth } = stack.pop();
-    let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); }
-    catch { continue; }
-    for (const ent of entries) {
-      const p = join(dir, ent.name);
-      if (ent.isDirectory()) {
-        if (depth < depthLimit) stack.push({ path: p, depth: depth + 1 });
-      } else if (ent.isFile()) {
-        onFile(p, depth);
-      }
+function scanCommandsDir(dir) {
+  if (!existsSync(dir)) return [];
+  const out = [];
+  try {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      if (!ent.isFile() || !ent.name.endsWith('.md')) continue;
+      const filePath = join(dir, ent.name);
+      const fallback = ent.name.replace(/\.md$/, '');
+      out.push(readMarkdownMeta(filePath, fallback));
     }
-  }
+  } catch {}
+  return out;
+}
+
+function scanSkillsDir(dir) {
+  if (!existsSync(dir)) return [];
+  const out = [];
+  try {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      if (!ent.isDirectory()) continue;
+      const filePath = join(dir, ent.name, 'SKILL.md');
+      if (!existsSync(filePath)) continue;
+      out.push(readMarkdownMeta(filePath, ent.name));
+    }
+  } catch {}
+  return out;
 }
 
 function listSlashCommands() {
-  const home = process.env.HOME;
-  if (!home) return [];
-
   const seen = new Set();
   const out = [];
   function push(meta, source) {
-    if (!meta.name) return;
+    if (!meta || !meta.name) return;
     if (seen.has(meta.name)) return;
     seen.add(meta.name);
-    out.push({ name: meta.name, description: meta.description, source });
+    out.push({ name: meta.name, description: meta.description || '', source });
   }
 
-  // 1) ~/.claude/skills/<name>/SKILL.md
-  try {
-    const skillsRoot = join(home, '.claude', 'skills');
-    for (const ent of readdirSync(skillsRoot, { withFileTypes: true })) {
-      if (!ent.isDirectory()) continue;
-      const filePath = join(skillsRoot, ent.name, 'SKILL.md');
-      try {
-        statSync(filePath);
-        push(readMarkdownMeta(filePath, ent.name), 'user');
-      } catch {}
+  // 1) User's own (non-plugin) skills.
+  const home = process.env.HOME;
+  if (home) {
+    for (const meta of scanSkillsDir(join(home, '.claude', 'skills'))) {
+      push(meta, 'user');
     }
-  } catch {}
+  }
 
-  // 2) ~/.claude/plugins/**/commands/*.md and 3) ~/.claude/plugins/**/skills/*/SKILL.md
-  const pluginsRoot = join(home, '.claude', 'plugins');
-  walkDir(pluginsRoot, 8, (filePath) => {
-    const fname = basename(filePath);
-    const parentDir = basename(dirname(filePath));
-    const grandDir = basename(dirname(dirname(filePath)));
-    if (fname === 'SKILL.md' && grandDir === 'skills') {
-      push(readMarkdownMeta(filePath, parentDir), 'plugin');
-    } else if (fname.endsWith('.md') && parentDir === 'commands') {
-      push(readMarkdownMeta(filePath, fname.replace(/\.md$/, '')), 'plugin');
+  // 2) Plugins, via `claude plugin list --json`. Honor enabled status.
+  let plugins = [];
+  try {
+    const stdout = execSync('claude plugin list --json', {
+      encoding: 'utf8',
+      timeout: 10000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    plugins = JSON.parse(stdout);
+  } catch (err) {
+    logErr('plugin list failed:', err.message?.slice(0, 200) || String(err));
+  }
+  if (Array.isArray(plugins)) {
+    for (const p of plugins) {
+      if (!p?.enabled) continue;
+      const root = p.installPath;
+      if (!root) continue;
+      for (const meta of scanCommandsDir(join(root, 'commands'))) push(meta, 'plugin');
+      for (const meta of scanSkillsDir(join(root, 'skills'))) push(meta, 'plugin');
     }
-  });
+  }
 
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
