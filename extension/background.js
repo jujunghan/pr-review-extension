@@ -109,6 +109,7 @@ function nativeSend(req, callbacks) {
     onDelta: (text) => { handler._sawDelta = true; callbacks.onDelta?.(text); },
     onDone: callbacks.onDone,
     onError: callbacks.onError,
+    onCommands: callbacks.onCommands,
     _req: req,
     _retried: callbacks._retried || false,
     _sawDelta: false,
