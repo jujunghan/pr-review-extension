@@ -1,0 +1,32 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install root deps
+        run: npm ci
+      - name: Run tests
+        run: npm test
+      - name: Sync manifest version from tag
+        run: npm run sync-manifest-version
+      - name: Pack extension zip
+        run: |
+          mkdir -p dist
+          cd extension && zip -r "../dist/pr-review-extension-${GITHUB_REF_NAME}.zip" .
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: dist/pr-review-extension-*.zip
+          generate_release_notes: true
