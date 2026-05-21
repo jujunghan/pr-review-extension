@@ -34,6 +34,47 @@
         <li>Ask your question below</li>
       </ol>
     </div>
+
+    <section id="onboarding" class="onboarding" hidden aria-label="Set up native host">
+      <h2 class="onboarding-title">One-time setup</h2>
+      <p class="onboarding-intro">
+        PR Review needs a small local helper (the "native messaging host") so it
+        can talk to your Claude Code CLI. You only do this once per machine.
+      </p>
+      <p class="onboarding-prereq">
+        <strong>Requires:</strong> Claude Code CLI installed and logged in
+        (Pro / Team / Max). Get it at
+        <a href="https://claude.com/code" target="_blank" rel="noopener">claude.com/code</a>.
+      </p>
+      <div class="onboarding-tabs" role="tablist">
+        <button id="tab-claude" class="onboarding-tab is-active" role="tab" aria-selected="true">Paste into Claude Code</button>
+        <button id="tab-shell" class="onboarding-tab" role="tab" aria-selected="false">Shell commands</button>
+      </div>
+      <div id="panel-claude" class="onboarding-panel" role="tabpanel">
+        <p class="onboarding-hint">Open a <code>claude</code> session in your terminal and paste this:</p>
+        <pre id="claude-prompt" class="onboarding-snippet" tabindex="0"></pre>
+        <button id="copy-claude" class="onboarding-copy" type="button">Copy prompt</button>
+      </div>
+      <div id="panel-shell" class="onboarding-panel" role="tabpanel" hidden>
+        <p class="onboarding-hint">Run these in your terminal:</p>
+        <pre id="shell-snippet" class="onboarding-snippet" tabindex="0"></pre>
+        <button id="copy-shell" class="onboarding-copy" type="button">Copy commands</button>
+      </div>
+      <div class="onboarding-actions">
+        <button id="retry-host" class="onboarding-retry" type="button">Test connection</button>
+        <span id="retry-status" class="onboarding-retry-status" role="status" aria-live="polite"></span>
+      </div>
+      <p class="onboarding-footer">
+        Unofficial third-party tool. Not affiliated with or endorsed by
+        Anthropic, Inc. "Claude" and "Claude Code" are trademarks of
+        Anthropic, Inc.
+      </p>
+    </section>
+
+    <div id="first-run-banner" class="first-run-banner" hidden role="status">
+      <span>AI-generated. Verify before merging. Not a substitute for human review.</span>
+      <button id="banner-dismiss" class="banner-dismiss" type="button" aria-label="Dismiss">×</button>
+    </div>
   </main>
 
   <footer>

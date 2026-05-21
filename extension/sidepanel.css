@@ -600,3 +600,123 @@ footer {
   0%, 100% { opacity: 0.3; transform: scale(0.85); }
   50% { opacity: 1; transform: scale(1); }
 }
+
+/* Onboarding view — shown when native host is missing */
+.onboarding {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text);
+}
+.onboarding[hidden] { display: none; }
+.onboarding-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.onboarding-intro,
+.onboarding-prereq,
+.onboarding-hint,
+.onboarding-footer {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.onboarding-prereq strong { color: var(--text); }
+.onboarding-footer {
+  font-size: 11px;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.onboarding-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.onboarding-tab {
+  background: none;
+  border: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.onboarding-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.onboarding-panel[hidden] { display: none; }
+.onboarding-snippet {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+}
+.onboarding-copy,
+.onboarding-retry {
+  align-self: flex-start;
+  background: var(--accent);
+  color: white;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.onboarding-copy:hover,
+.onboarding-retry:hover { background: var(--accent-strong); }
+.onboarding-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.onboarding-retry-status {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* First-run AI disclaimer banner — dismissible, persisted */
+.first-run-banner {
+  margin: 10px 12px;
+  padding: 8px 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.first-run-banner[hidden] { display: none; }
+.banner-dismiss {
+  background: none;
+  border: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 4px;
+}
+.banner-dismiss:hover { color: var(--text); }
+
+/* Per-response footer line */
+.assistant-footer {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 4px;
+  text-align: right;
+}
