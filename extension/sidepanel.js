@@ -45,6 +45,7 @@ let nextStreamId = 1;
 // Pasted images attached to the next send. Cleared after send dispatches.
 // Each entry: { dataUrl, mimeType, name }
 const pendingImages = [];
+const MAX_PENDING_IMAGES = 5;
 // streamId → assistant bubble element. Each send gets its own bubble so the
 // user can ask follow-ups before the previous answer finishes streaming
 // without freezing the older bubble in thinking state.
@@ -555,7 +556,17 @@ function handlePaste(e) {
   }
   if (imageItems.length > 0) {
     e.preventDefault();
-    for (const blob of imageItems) attachImageBlob(blob);
+    const remaining = MAX_PENDING_IMAGES - pendingImages.length;
+    if (remaining <= 0) {
+      setStatus(`Max ${MAX_PENDING_IMAGES} images per message — remove one to attach another.`, { error: true });
+      return;
+    }
+    const accepted = imageItems.slice(0, remaining);
+    const dropped = imageItems.length - accepted.length;
+    for (const blob of accepted) attachImageBlob(blob);
+    if (dropped > 0) {
+      setStatus(`Attached ${accepted.length}, dropped ${dropped} (max ${MAX_PENDING_IMAGES} per message).`, { error: true });
+    }
     return;
   }
 
