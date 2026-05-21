@@ -1,11 +1,40 @@
 import { marked } from './lib/marked.esm.js';
 
+function escapeHtmlText(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function isSafeUrl(href) {
+  if (!href) return false;
+  return /^(https?:|mailto:|#|\/)/i.test(href);
+}
+
 marked.use({
   gfm: true,
   breaks: true,
-  // marked v15+ escapes HTML by default; no extra sanitizer needed
-  // for this use case (output is rendered, not stored, and the
-  // source is the user's own claude session running locally).
+  // PR diff content is partially attacker-controllable (the PR author).
+  // marked v15 removed its sanitizer, so we override the html/link/image
+  // renderers to drop raw HTML and reject non-http(s) URL schemes
+  // (javascript:, data:, vbscript:, file:, ...). This is defense in
+  // depth — MV3 CSP also blocks inline script — but it removes the
+  // phishing / exfil surface that LLM-rendered HTML otherwise creates.
+  renderer: {
+    html(token) {
+      return escapeHtmlText(token.raw ?? token.text ?? '');
+    },
+    link({ href, title, tokens }) {
+      const inner = this.parser.parseInline(tokens);
+      if (!isSafeUrl(href)) return inner;
+      const t = title ? ` title="${escapeHtmlText(title)}"` : '';
+      return `<a href="${escapeHtmlText(href)}" target="_blank" rel="noopener noreferrer"${t}>${inner}</a>`;
+    },
+    image({ href, title, text }) {
+      if (!isSafeUrl(href)) return escapeHtmlText(text || '');
+      const t = title ? ` title="${escapeHtmlText(title)}"` : '';
+      return `<img src="${escapeHtmlText(href)}" alt="${escapeHtmlText(text || '')}"${t}>`;
+    },
+  },
 });
 
 const $ = (sel) => document.querySelector(sel);
