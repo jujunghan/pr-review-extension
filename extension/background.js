@@ -11,6 +11,9 @@ let port = null;
 let nextId = 1;
 // id -> { onDelta, onDone, onError }
 const pending = new Map();
+// streamId -> backend id (the one we use with native messaging). Lets us
+// translate a side-panel-facing cancel back to the host's protocol.
+const streamIdToBackendId = new Map();
 // prUrl -> diff text (only stored if within limits)
 const diffCache = new Map();
 // prUrl -> { skipped: 'too-large', bytes, lines } metadata for sidepanel
@@ -222,11 +225,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         diffAttached.add(prUrl);
       }
 
-      nativeSend({ type: 'send', prUrl, file, lines, code, question: finalQuestion, cwd, images }, {
+      const backendId = nativeSend({ type: 'send', prUrl, file, lines, code, question: finalQuestion, cwd, images }, {
         onDelta: (text) => replyTo({ delta: text }),
-        onDone: (sessionId) => replyTo({ done: true, sessionId }),
-        onError: (message) => replyTo({ error: message }),
+        onDone: (sessionId) => { streamIdToBackendId.delete(streamId); replyTo({ done: true, sessionId }); },
+        onError: (message) => { streamIdToBackendId.delete(streamId); replyTo({ error: message }); },
       });
+      if (backendId != null) streamIdToBackendId.set(streamId, backendId);
+      sendResponse({ ok: true });
+      return;
+    }
+    if (msg.type === 'cancelStream') {
+      const backendId = streamIdToBackendId.get(msg.streamId);
+      if (backendId != null) {
+        nativeSend({ type: 'cancel', targetId: backendId }, {});
+        streamIdToBackendId.delete(msg.streamId);
+      }
+      sendResponse({ ok: true });
+      return;
+    }
+    if (msg.type === 'cancelAllStreams') {
+      for (const [streamId, backendId] of streamIdToBackendId) {
+        nativeSend({ type: 'cancel', targetId: backendId }, {});
+      }
+      streamIdToBackendId.clear();
       sendResponse({ ok: true });
       return;
     }

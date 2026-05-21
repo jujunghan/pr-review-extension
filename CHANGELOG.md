@@ -14,6 +14,8 @@ First public release.
 - MIT `LICENSE`, `SECURITY.md`, `docs/privacy.md` (hosted on GitHub Pages).
 - Side panel onboarding view: when the native messaging host is missing, surfaces a copy-paste Claude Code prompt that performs the install end-to-end.
 - Onboarding "Test connection" auto-polls (3s × 6 attempts) instead of requiring repeated manual clicks.
+- Stop button cancels in-flight streams (`SIGTERM` to the `claude` child process).
+- Assistant responses now render as markdown (code fences, inline code, lists, headings, blockquotes) via vendored `marked@15.0.7` (MIT). Includes typography pass on the rendered output.
 - First-run AI-output disclaimer banner (dismissible) and per-response footer.
 - Trademark disclaimer on README header, side panel onboarding footer, and CWS listing surfaces.
 

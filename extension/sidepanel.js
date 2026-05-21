@@ -1,3 +1,13 @@
+import { marked } from './lib/marked.esm.js';
+
+marked.use({
+  gfm: true,
+  breaks: true,
+  // marked v15+ escapes HTML by default; no extra sanitizer needed
+  // for this use case (output is rendered, not stored, and the
+  // source is the user's own claude session running locally).
+});
+
 const $ = (sel) => document.querySelector(sel);
 
 let currentPrUrl = null;
@@ -147,10 +157,23 @@ async function maybeShowFirstRunBanner() {
   });
 }
 
+function refreshStopButton() {
+  const btn = document.getElementById('stop-btn');
+  if (!btn) return;
+  btn.hidden = activeStreams.size === 0;
+}
+
 init();
 
 async function init() {
   wireOnboardingControls();
+
+  document.getElementById('stop-btn').addEventListener('click', async () => {
+    await chrome.runtime.sendMessage({ type: 'cancelAllStreams' });
+    // Don't force-finalize the bubbles here — the host will send an
+    // 'error' for each cancelled stream, and the existing streamChunk
+    // error path will finalize them and reset the status line.
+  });
 
   const hostRes = await chrome.runtime.sendMessage({ type: 'getHostStatus' });
   if (hostRes?.status !== 'ready') {
@@ -192,11 +215,13 @@ async function init() {
       else if (msg.done) {
         finalizeBubble(bubble);
         activeStreams.delete(msg.streamId);
+        refreshStopButton();
         if (activeStreams.size === 0) setStatus('');
       } else if (msg.error) {
         setStatus(`Claude error: ${msg.error}`, { error: true });
         finalizeBubble(bubble);
         activeStreams.delete(msg.streamId);
+        refreshStopButton();
       }
     }
     if (msg.type === 'hostStatus') {
@@ -383,12 +408,24 @@ function startAssistantMessage() {
   return div;
 }
 
+function ensureContentDiv(bubble) {
+  let content = bubble.querySelector('.msg-content');
+  if (content) return content;
+  // First delta: remove the thinking dots and create the content div.
+  bubble.classList.remove('thinking');
+  while (bubble.firstChild) bubble.removeChild(bubble.firstChild);
+  content = document.createElement('div');
+  content.className = 'msg-content';
+  bubble.appendChild(content);
+  return content;
+}
+
 function appendAssistantDelta(bubble, text) {
-  if (bubble.classList.contains('thinking')) {
-    bubble.classList.remove('thinking');
-    bubble.textContent = ''; // strip the dots span
-  }
-  bubble.textContent += text;
+  const content = ensureContentDiv(bubble);
+  const prev = bubble.dataset.rawMd || '';
+  const next = prev + text;
+  bubble.dataset.rawMd = next;
+  content.innerHTML = marked.parse(next);
   scrollHistory();
 }
 
@@ -397,7 +434,11 @@ function finalizeBubble(bubble) {
   // empty bubble with dots stuck forever.
   if (bubble.classList.contains('thinking')) {
     bubble.classList.remove('thinking');
-    bubble.textContent = '(no response)';
+    while (bubble.firstChild) bubble.removeChild(bubble.firstChild);
+    const content = document.createElement('div');
+    content.className = 'msg-content';
+    content.textContent = '(no response)';
+    bubble.appendChild(content);
   }
 
   if (bubble && !bubble.dataset.footerAdded) {
@@ -598,6 +639,7 @@ async function send() {
 
   const streamId = nextStreamId++;
   activeStreams.set(streamId, bubble);
+  refreshStopButton();
   console.log('[PR Review SP] send', 'streamId=', streamId, 'prUrl=', payload.prUrl, 'q.len=', payload.question?.length);
   chrome.runtime.sendMessage({
     type: 'send',

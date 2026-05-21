@@ -71,6 +71,14 @@ function handle(msg) {
     });
     return;
   }
+  if (type === 'cancel') {
+    const entry = inflight.get(msg.targetId);
+    if (entry && entry.proc) {
+      try { entry.proc.kill('SIGTERM'); } catch {}
+    }
+    writeMessage({ id, type: 'ok' });
+    return;
+  }
   writeMessage({ id, type: 'error', message: `unknown type: ${type}` });
 }
 
