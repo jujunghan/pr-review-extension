@@ -515,6 +515,12 @@ function clearHistoryUI() {
   const h = $('#history');
   h.innerHTML = '';
   activeStreams.clear();
+  // Without this, a stale 'Thinking…' / error / 'Context cleared.' from a
+  // previous PR survives the wipe — and any late streamChunk done that
+  // arrives for the just-cleared streams gets silently dropped, so nothing
+  // else clears the status. Reset both the text and the Stop button.
+  setStatus('');
+  refreshStopButton();
   renderEmptyState();
 }
 
