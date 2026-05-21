@@ -682,6 +682,9 @@ footer {
   display: flex;
   gap: 8px;
   align-items: center;
+  /* Bump the gap above "Test connection" — flex gap of the parent (12px)
+     alone left Copy commands and Test connection feeling stacked. */
+  margin-top: 10px;
 }
 .onboarding-retry-status {
   font-size: 12px;
