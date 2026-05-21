@@ -40,7 +40,7 @@ export async function parseStream(readable, emitter) {
   }
 }
 
-export function runClaude({ sessionId, isNew, message, cwd, extraDirs }) {
+export function runClaude({ sessionId, isNew, message, cwd, extraDirs, systemPrompt }) {
   const args = ['-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose'];
   if (isNew) {
     args.push('--session-id', sessionId);
@@ -49,6 +49,9 @@ export function runClaude({ sessionId, isNew, message, cwd, extraDirs }) {
   }
   if (Array.isArray(extraDirs) && extraDirs.length > 0) {
     args.push('--add-dir', ...extraDirs);
+  }
+  if (systemPrompt) {
+    args.push('--append-system-prompt', systemPrompt);
   }
   args.push(message);
   const env = { ...process.env };

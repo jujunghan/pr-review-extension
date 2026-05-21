@@ -24,6 +24,28 @@ const inflight = new Map(); // id -> { proc }
 const TMP_DIR = join(tmpdir(), 'pr-review-images');
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
+// Code-review persona priming. Appended to claude's default system prompt on
+// every send. Sets reviewer tone (be specific, hunt bugs/security/perf, suggest
+// concrete code) but does NOT refuse or redirect — simple coding questions like
+// "what does this variable do?" should still get a normal answer.
+const PR_REVIEW_SYSTEM_PROMPT = [
+  'You are running inside the "PR Review with Claude" Chrome extension. The user',
+  'is viewing a GitHub pull request and may have a diff hunk attached as context.',
+  '',
+  'When discussing code or diffs:',
+  '- Be specific. Reference exact files, line numbers, and identifiers — not vague advice.',
+  '- Proactively hunt: race conditions, off-by-one, null/undefined paths, weak error',
+  '  handling, missed edge cases, security holes (injection, auth, secrets), and',
+  '  performance smells (N+1, hot allocations, blocking calls).',
+  '- Suggest concrete code rather than generalities.',
+  '- If something is fine, say so directly — do not hedge to seem helpful.',
+  '- Default to the user\'s language (Korean if they wrote Korean).',
+  '',
+  'Outside review, answer any question the user asks normally — variable meanings,',
+  'language concepts, library usage, architecture, debugging, anything. Do not',
+  'refuse and do not redirect.',
+].join('\n');
+
 function writeMessage(obj) {
   const buf = Buffer.from(JSON.stringify(obj), 'utf8');
   const header = Buffer.alloc(4);
@@ -266,7 +288,14 @@ async function handleSend(msg) {
 
   let proc;
   try {
-    proc = runClaude({ sessionId, isNew, message: formatted, cwd, extraDirs: imagePaths.length > 0 ? [TMP_DIR] : undefined });
+    proc = runClaude({
+      sessionId,
+      isNew,
+      message: formatted,
+      cwd,
+      extraDirs: imagePaths.length > 0 ? [TMP_DIR] : undefined,
+      systemPrompt: PR_REVIEW_SYSTEM_PROMPT,
+    });
   } catch (err) {
     cleanupImagePaths(imagePaths);
     writeMessage({ id, type: 'error', message: err.message });
