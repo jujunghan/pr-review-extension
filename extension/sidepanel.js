@@ -198,10 +198,19 @@ async function init() {
   wireOnboardingControls();
 
   document.getElementById('stop-btn').addEventListener('click', async () => {
+    // Explicit Stop wipes the user's question and the in-flight assistant
+    // bubble from the side panel — UX-wise, treat the exchange as if it
+    // never happened. The late-arriving streamChunk done/error messages
+    // for the cancelled streams won't find an entry in activeStreams and
+    // get silently dropped by the !entry guard in the streamChunk handler.
+    for (const entry of activeStreams.values()) {
+      entry.userBubble?.remove();
+      entry.bubble?.remove();
+    }
+    activeStreams.clear();
+    refreshStopButton();
+    setStatus('');
     await chrome.runtime.sendMessage({ type: 'cancelAllStreams' });
-    // Don't force-finalize the bubbles here — the host will send an
-    // 'error' for each cancelled stream, and the existing streamChunk
-    // error path will finalize them and reset the status line.
   });
 
   const hostRes = await chrome.runtime.sendMessage({ type: 'getHostStatus' });
@@ -237,9 +246,10 @@ async function init() {
       renderDiffStatus(msg.status);
     }
     if (msg.type === 'streamChunk') {
-      const bubble = activeStreams.get(msg.streamId);
-      console.log('[PR Review SP] streamChunk', 'streamId=', msg.streamId, 'matched=', !!bubble, 'delta?', !!msg.delta, 'done?', !!msg.done, 'error?', !!msg.error);
-      if (!bubble) return;
+      const entry = activeStreams.get(msg.streamId);
+      console.log('[PR Review SP] streamChunk', 'streamId=', msg.streamId, 'matched=', !!entry, 'delta?', !!msg.delta, 'done?', !!msg.done, 'error?', !!msg.error);
+      if (!entry) return;
+      const bubble = entry.bubble;
       if (msg.delta != null) appendAssistantDelta(bubble, msg.delta);
       else if (msg.done) {
         finalizeBubble(bubble);
@@ -410,6 +420,7 @@ function appendUserMessage(text) {
   div.innerHTML = renderWithPasteRefs(text);
   $('#history').appendChild(div);
   scrollHistory();
+  return div;
 }
 
 function renderWithPasteRefs(text) {
@@ -643,7 +654,7 @@ async function send() {
   const userText = currentSelection
     ? `[${currentSelection.file || 'selection'}${currentSelection.lines ? `:${currentSelection.lines}` : ''}]\n\n${rawQuestion}`
     : rawQuestion;
-  appendUserMessage(userText);
+  const userBubble = appendUserMessage(userText);
   $('#input').value = '';
   setStatus('Thinking…', { thinking: true });
   const bubble = startAssistantMessage();
@@ -667,7 +678,7 @@ async function send() {
   renderPendingImages();
 
   const streamId = nextStreamId++;
-  activeStreams.set(streamId, bubble);
+  activeStreams.set(streamId, { userBubble, bubble });
   refreshStopButton();
   console.log('[PR Review SP] send', 'streamId=', streamId, 'prUrl=', payload.prUrl, 'q.len=', payload.question?.length);
   chrome.runtime.sendMessage({
@@ -678,5 +689,6 @@ async function send() {
     setStatus(`Send failed: ${err?.message || err}`, { error: true });
     finalizeBubble(bubble);
     activeStreams.delete(streamId);
+    refreshStopButton();
   });
 }
