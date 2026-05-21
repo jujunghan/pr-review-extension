@@ -33,6 +33,9 @@ Developers comfortable running a one-liner in their terminal. Not non-technical 
 - `LICENSE` (MIT), `SECURITY.md`, `docs/privacy.md` (hosted on GitHub Pages)
 - README rewritten for the broader audience: prerequisites, one-paste install path via Claude Code, AI defensive language
 - Extension onboarding UX: when native host isn't connected, the side panel shows a copyable Claude Code prompt that performs the entire install
+- **Onboarding "Test connection" auto-poll**: after the user clicks the retry button, the side panel polls `getHostStatus` every 3s for up to 6 attempts (~18s) before showing the final failure message
+- **Stop generation button**: while any assistant response is streaming, the side panel surfaces a Stop control; clicking it cancels every active stream by killing the corresponding `claude` child process inside the native host
+- **Markdown rendering of assistant responses**: vendor `marked` (MIT, single-file ESM, pinned version) to convert assistant streams from raw text to rendered markdown. Code fences, inline code, lists, headings, blockquotes, bold/italic all render with the existing CSS. Includes a typography pass on the rendered output (heading sizes, paragraph spacing, list indentation, line-height) so PR-review-length responses are actually scannable
 - Side panel disclaimers: first-run banner and per-response footer noting "AI output — verify"
 - GitHub Actions release workflow that, on `v*` tag push, builds the extension zip and creates a draft release
 - Repo flipped to public on launch day
@@ -329,6 +332,9 @@ Same-window launch with the explicit acceptance that CWS review delay is outside
 - ☐ `https://jujunghan.github.io/pr-review-extension/privacy.html` is reachable and content matches the CWS privacy form
 - ☐ AI-output disclaimer present on its four surfaces (8.1): README "What it doesn't do" section, CWS detailed description, side panel first-run banner, side panel response footer
 - ☐ Trademark disclaimer present on its four surfaces (8.3): README header, CWS short description tail, CWS detailed description first paragraph, side panel onboarding footer
+- ☐ Onboarding "Test connection" auto-polls (3s × 6 attempts) and ends with a final failure message rather than a single one-shot check
+- ☐ Stop button appears in the side panel while any stream is in flight; clicking it terminates the in-flight `claude` process(es) and clears the active stream(s) in the UI
+- ☐ Assistant responses render as markdown: code fences, inline code, headings, lists, bold/italic, blockquotes; vendored `marked` library is the only source under `extension/lib/`
 
 ---
 

@@ -1581,6 +1581,609 @@ EOF
 
 ---
 
+## Task 12a: Onboarding — auto-poll "Test connection"
+
+Current retry handler in `extension/sidepanel.js` calls `getHostStatus` once per click. If Chrome's native messaging manifest registration lags by 1–2 seconds (typical right after `npm run install-host` finishes), the user sees a "give it a second, then click again" message and has to click repeatedly. Replace the one-shot check with a bounded auto-poll.
+
+**Files:**
+- Modify: `extension/sidepanel.js`
+- Modify: `CHANGELOG.md` (add bullet)
+
+- [ ] **Step 1: Replace the existing `retry-host` click handler logic in `wireOnboardingControls`**
+
+The current click handler (inside `wireOnboardingControls`):
+
+```javascript
+  document.getElementById('retry-host').addEventListener('click', async () => {
+    flashRetryStatus('Testing…');
+    const res = await chrome.runtime.sendMessage({ type: 'getHostStatus' });
+    if (res?.status === 'ready') {
+      hideOnboarding();
+      flashRetryStatus('Connected');
+    } else if (res?.status === 'probing') {
+      flashRetryStatus('Probing — give it a second, then click again');
+    } else {
+      flashRetryStatus('Still missing. Did you reload the extension?');
+    }
+  });
+```
+
+Replace it with a delegation to a new `startRetryPoll()` helper:
+
+```javascript
+  document.getElementById('retry-host').addEventListener('click', () => {
+    startRetryPoll();
+  });
+```
+
+- [ ] **Step 2: Add the poll state + helpers near the other onboarding helpers**
+
+Insert these declarations immediately after `flashRetryStatus` (still at the top level of the file, alongside the other onboarding helpers):
+
+```javascript
+const RETRY_POLL_MAX = 6;
+const RETRY_POLL_INTERVAL_MS = 3000;
+let retryPollTimer = null;
+let retryPollCount = 0;
+
+function stopRetryPoll() {
+  if (retryPollTimer) {
+    clearTimeout(retryPollTimer);
+    retryPollTimer = null;
+  }
+}
+
+function startRetryPoll() {
+  stopRetryPoll();
+  retryPollCount = 0;
+  pollHostOnce();
+}
+
+async function pollHostOnce() {
+  retryPollCount += 1;
+  flashRetryStatus(`Checking… (${retryPollCount}/${RETRY_POLL_MAX})`);
+  const res = await chrome.runtime.sendMessage({ type: 'getHostStatus' });
+  if (res?.status === 'ready') {
+    stopRetryPoll();
+    hideOnboarding();
+    flashRetryStatus('Connected');
+    return;
+  }
+  if (retryPollCount >= RETRY_POLL_MAX) {
+    stopRetryPoll();
+    flashRetryStatus('Still missing. Did you run all install steps and reload the extension in chrome://extensions?');
+    return;
+  }
+  retryPollTimer = setTimeout(pollHostOnce, RETRY_POLL_INTERVAL_MS);
+}
+```
+
+- [ ] **Step 3: Stop the poll if the side panel sees a `hostStatus: ready` broadcast independently**
+
+In the existing `chrome.runtime.onMessage.addListener` block, the `hostStatus` branch (added in Task 9) currently calls `hideOnboarding()` on `'ready'`. Add `stopRetryPoll()` so the poll loop doesn't keep running after the host comes alive via a different path:
+
+```javascript
+    if (msg.type === 'hostStatus') {
+      if (msg.status === 'missing') {
+        showOnboarding(chrome.runtime.id);
+      } else if (msg.status === 'ready') {
+        stopRetryPoll();
+        hideOnboarding();
+        maybeShowFirstRunBanner();
+      }
+    }
+```
+
+- [ ] **Step 4: Update CHANGELOG.md**
+
+In the `### Added` section of `## [1.0.0]`, insert this bullet right after the line about "Side panel onboarding view:":
+
+```markdown
+- Onboarding "Test connection" auto-polls (3s × 6 attempts) instead of requiring repeated manual clicks.
+```
+
+- [ ] **Step 5: Verify**
+
+```bash
+node --check extension/sidepanel.js
+```
+
+Expected: OK.
+
+(Manual smoke deferred to Task 13.)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add extension/sidepanel.js CHANGELOG.md
+git commit -m "$(cat <<'EOF'
+feat(extension): auto-poll Test connection during onboarding
+
+Click 'Test connection' now starts a bounded poll loop (3s × 6
+attempts) instead of one-shot. Removes the 'give it a second and
+click again' confusion when Chrome's native messaging manifest
+registration lags right after npm run install-host finishes. Counter
+text shows N/6 progress so the user knows it's actively waiting.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+## Task 12b: Stop generation button
+
+Add a Stop control that cancels in-flight assistant responses. Required new protocol:
+- `sidepanel → background`: `{type: 'cancelStream', streamId}` (cancel one) or `{type: 'cancelAllStreams'}` (cancel all). For UX simplicity, the button cancels ALL active streams.
+- `background → host`: `{id: <new>, type: 'cancel', targetId: <backend id>}` per backend id.
+- `host`: looks up `inflight.get(targetId).proc`, sends `proc.kill('SIGTERM')`, replies `{id, type: 'ok'}` for the cancel request itself. The cancelled `send`'s `exit` handler will fire naturally and write its `error` message; the side panel handles that as a normal stream termination.
+
+**Files:**
+- Modify: `bridge/host.js`
+- Modify: `extension/background.js`
+- Modify: `extension/sidepanel.html`
+- Modify: `extension/sidepanel.css`
+- Modify: `extension/sidepanel.js`
+- Modify: `CHANGELOG.md` (add bullet)
+
+- [ ] **Step 1: `bridge/host.js` — handle the cancel message**
+
+In `handle()`, add a new branch before the `unknown type` fallback:
+
+```javascript
+  if (type === 'cancel') {
+    const entry = inflight.get(msg.targetId);
+    if (entry && entry.proc) {
+      try { entry.proc.kill('SIGTERM'); } catch {}
+    }
+    writeMessage({ id, type: 'ok' });
+    return;
+  }
+```
+
+The existing `proc.on('exit', ...)` handler already writes a `type: 'error'` to the original `id` (the one that was cancelled) and deletes from `inflight`, so we don't need to clean up `inflight` here.
+
+- [ ] **Step 2: `extension/background.js` — track streamId → backend id and route the cancel**
+
+Inside the `chrome.runtime.onMessage.addListener` block, the `send` branch starts at line ~189 in the post-Task-7 file. Modify it to record the `streamId → id` mapping. First, add a module-level map near the other declarations (alongside `pending = new Map();`):
+
+```javascript
+// streamId -> backend id (the one we use with native messaging). Lets us
+// translate a side-panel-facing cancel back to the host's protocol.
+const streamIdToBackendId = new Map();
+```
+
+Then in the existing `send` handler, capture the id returned from `nativeSend` (which already returns `id`):
+
+```javascript
+    if (msg.type === 'send') {
+      const { streamId, target, prUrl, file, lines, code, question, images } = msg;
+      const cwd = await lookupRepoPath(prUrl);
+      const replyTo = (payload) => {
+        const kind = payload.delta != null ? 'delta' : (payload.done ? 'done' : (payload.error ? 'error' : '?'));
+        console.log('[PR Review BG] replyTo', target || 'broadcast', 'streamId=', streamId, kind, payload.delta?.length || '');
+        if (target === 'tab' && sender.tab?.id != null) {
+          chrome.tabs.sendMessage(sender.tab.id, { type: 'streamChunk', streamId, ...payload }).catch(() => {});
+        } else {
+          broadcast({ type: 'streamChunk', streamId, ...payload });
+        }
+      };
+
+      let finalQuestion = question;
+      const cacheKey = prUrl?.split('#')[0];
+      if (cacheKey && !diffAttached.has(prUrl) && diffCache.has(cacheKey)) {
+        const diff = diffCache.get(cacheKey);
+        finalQuestion = `PR diff (review context):\n\`\`\`diff\n${diff}\n\`\`\`\n\n${question}`;
+        diffAttached.add(prUrl);
+      }
+
+      const backendId = nativeSend({ type: 'send', prUrl, file, lines, code, question: finalQuestion, cwd, images }, {
+        onDelta: (text) => replyTo({ delta: text }),
+        onDone: (sessionId) => { streamIdToBackendId.delete(streamId); replyTo({ done: true, sessionId }); },
+        onError: (message) => { streamIdToBackendId.delete(streamId); replyTo({ error: message }); },
+      });
+      if (backendId != null) streamIdToBackendId.set(streamId, backendId);
+      sendResponse({ ok: true });
+      return;
+    }
+```
+
+Add new handlers after the `send` block:
+
+```javascript
+    if (msg.type === 'cancelStream') {
+      const backendId = streamIdToBackendId.get(msg.streamId);
+      if (backendId != null) {
+        nativeSend({ type: 'cancel', targetId: backendId }, {});
+        streamIdToBackendId.delete(msg.streamId);
+      }
+      sendResponse({ ok: true });
+      return;
+    }
+    if (msg.type === 'cancelAllStreams') {
+      for (const [streamId, backendId] of streamIdToBackendId) {
+        nativeSend({ type: 'cancel', targetId: backendId }, {});
+      }
+      streamIdToBackendId.clear();
+      sendResponse({ ok: true });
+      return;
+    }
+```
+
+- [ ] **Step 3: `extension/sidepanel.html` — add the Stop button**
+
+Inside the existing `<footer>` block, immediately above `<div class="input-wrap">`, add:
+
+```html
+    <button id="stop-btn" class="stop-btn" type="button" hidden aria-label="Stop generation">
+      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+        <rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor"/>
+      </svg>
+      Stop
+    </button>
+```
+
+- [ ] **Step 4: `extension/sidepanel.css` — style the Stop button**
+
+Append at the end of the file:
+
+```css
+/* Stop generation button — shown while any stream is in flight */
+.stop-btn {
+  align-self: flex-end;
+  margin: 0 12px 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.stop-btn:hover { background: var(--border); }
+.stop-btn[hidden] { display: none; }
+```
+
+- [ ] **Step 5: `extension/sidepanel.js` — wire show/hide and the cancel click**
+
+Add a helper near the other top-level helpers (right after `maybeShowFirstRunBanner`):
+
+```javascript
+function refreshStopButton() {
+  const btn = document.getElementById('stop-btn');
+  if (!btn) return;
+  btn.hidden = activeStreams.size === 0;
+}
+```
+
+Inside `init()`, wire the click after `wireOnboardingControls();` (anywhere in `init` before the existing `getHostStatus` call is fine, but placing it next to the other static button wires keeps it grouped):
+
+```javascript
+  document.getElementById('stop-btn').addEventListener('click', async () => {
+    await chrome.runtime.sendMessage({ type: 'cancelAllStreams' });
+    // Don't force-finalize the bubbles here — the host will send an
+    // 'error' for each cancelled stream, and the existing streamChunk
+    // error path will finalize them and reset the status line.
+  });
+```
+
+Now refresh the button in three places (any time `activeStreams` grows or shrinks):
+
+1. Inside the `streamChunk` listener, right after `activeStreams.delete(msg.streamId);` in the `done` branch:
+
+```javascript
+        finalizeBubble(bubble);
+        activeStreams.delete(msg.streamId);
+        refreshStopButton();
+        if (activeStreams.size === 0) setStatus('');
+```
+
+2. Inside the `streamChunk` listener, right after `activeStreams.delete(msg.streamId);` in the `error` branch:
+
+```javascript
+      } else if (msg.error) {
+        setStatus(`Claude error: ${msg.error}`, { error: true });
+        finalizeBubble(bubble);
+        activeStreams.delete(msg.streamId);
+        refreshStopButton();
+      }
+```
+
+3. Inside the `send()` function (find it with `function send(`). Locate the line where the bubble is registered via `activeStreams.set(streamId, ...)` and add `refreshStopButton();` immediately after it.
+
+If you cannot find `function send(` cleanly, search for `activeStreams.set` — there will be exactly one site where a new stream is registered. Add `refreshStopButton();` on the next line.
+
+- [ ] **Step 6: Update CHANGELOG.md**
+
+In the `### Added` section of `## [1.0.0]`, after the auto-poll bullet from Task 12a, insert:
+
+```markdown
+- Stop button cancels in-flight streams (`SIGTERM` to the `claude` child process).
+```
+
+- [ ] **Step 7: Verify**
+
+```bash
+node --check bridge/host.js
+node --check extension/background.js
+node --check extension/sidepanel.js
+npm test
+```
+
+All four should pass. The bridge tests don't exercise the new `cancel` branch, so no new unit test is required — the integration is exercised manually in Task 13.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add bridge/host.js extension/background.js extension/sidepanel.html extension/sidepanel.css extension/sidepanel.js CHANGELOG.md
+git commit -m "$(cat <<'EOF'
+feat(extension): add Stop button to cancel in-flight streams
+
+New cancel protocol: sidepanel.cancelAllStreams → background sends
+type:'cancel' with targetId per active stream → host SIGTERMs the
+matching claude child. The cancelled child's existing exit handler
+surfaces the error to the side panel, which finalizes the bubble via
+the standard error path.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+## Task 12c: Markdown rendering for assistant responses + typography pass
+
+Today `appendAssistantDelta` does `bubble.textContent += text`, which renders the assistant's markdown as raw characters: `**bold**`, `## headers`, and triple-backtick code fences are visible as syntax instead of formatting. The existing CSS at `.msg pre` / `.msg code` already styles code blocks correctly — they just never get created in the DOM. Vendor `marked` and re-render the bubble on each delta so the rendered HTML lands in the DOM, then add a small CSS pass for headings/lists/blockquotes/paragraph spacing.
+
+**Files:**
+- Create: `extension/lib/marked.esm.js` (vendored, MIT, pinned version)
+- Modify: `extension/sidepanel.js`
+- Modify: `extension/sidepanel.css`
+- Modify: `extension/manifest.json` (none required — `import` of local extension files works under MV3's default CSP)
+- Modify: `CHANGELOG.md` (add bullet)
+- Note: CWS reviewer notes should mention the vendored file (P3 step 6).
+
+The bubble structure must be reworked so the markdown re-render target is a child element, otherwise `finalizeBubble`'s `.assistant-footer` gets clobbered on each delta.
+
+Target structure for assistant bubbles after this task:
+
+```html
+<div class="msg assistant">
+  <div class="msg-content"><!-- innerHTML target --></div>
+  <!-- .assistant-footer appended once on finalize -->
+</div>
+```
+
+For "thinking" state, the existing `.thinking-dots` span lives directly inside the bubble (no wrapper). On first delta arrival, the dots are stripped, the `<div class="msg-content">` is created, and from then on it owns the rendering.
+
+- [ ] **Step 1: Vendor `marked` into `extension/lib/marked.esm.js`**
+
+Fetch a pinned, recent stable release. From the project root:
+
+```bash
+mkdir -p extension/lib
+curl -L --fail \
+  -o extension/lib/marked.esm.js \
+  https://cdn.jsdelivr.net/npm/marked@15.0.7/lib/marked.esm.js
+```
+
+If `marked@15.0.7` is not available on jsdelivr (or jsdelivr is slow), fall back to:
+
+```bash
+curl -L --fail \
+  -o extension/lib/marked.esm.js \
+  https://unpkg.com/marked@15.0.7/lib/marked.esm.js
+```
+
+If `15.0.7` is unavailable, try the most recent v15.x stable patch you can resolve (`@15`, `@^15.0.0`). Whichever version actually lands, record it in the first comment line of the file (preserve marked's existing license header, add a `// vendored by curl <date>, source <url>` line at the top).
+
+Confirm the file is a valid ESM module:
+
+```bash
+node --input-type=module -e "import('./extension/lib/marked.esm.js').then(m => console.log(typeof m.marked, typeof m.parse))"
+```
+
+Expected: `function function` (both `marked` instance and `parse` function are exported).
+
+If the version you ended up with does not export `parse` as a named export, prefer the form `import { marked } from './lib/marked.esm.js'` then call `marked.parse(...)` in step 3. Either form is fine — pick one and stay consistent.
+
+- [ ] **Step 2: Rework the bubble structure in `extension/sidepanel.js`**
+
+Replace the existing `startAssistantMessage`, `appendAssistantDelta`, and `finalizeBubble` functions. Read them first to confirm the current implementation, then replace with:
+
+```javascript
+import { marked } from './lib/marked.esm.js';
+
+marked.use({
+  gfm: true,
+  breaks: true,
+  // marked v15+ escapes HTML by default; no extra sanitizer needed
+  // for this use case (output is rendered, not stored, and the
+  // source is the user's own claude session running locally).
+});
+
+function startAssistantMessage() {
+  hideEmptyState();
+  const div = document.createElement('div');
+  div.className = 'msg assistant thinking';
+  const dots = document.createElement('span');
+  dots.className = 'thinking-dots';
+  dots.innerHTML = '<span></span><span></span><span></span>';
+  div.appendChild(dots);
+  $('#history').appendChild(div);
+  scrollHistory();
+  return div;
+}
+
+function ensureContentDiv(bubble) {
+  let content = bubble.querySelector('.msg-content');
+  if (content) return content;
+  // First delta: remove the thinking dots and create the content div.
+  bubble.classList.remove('thinking');
+  while (bubble.firstChild) bubble.removeChild(bubble.firstChild);
+  content = document.createElement('div');
+  content.className = 'msg-content';
+  bubble.appendChild(content);
+  return content;
+}
+
+function appendAssistantDelta(bubble, text) {
+  const content = ensureContentDiv(bubble);
+  const prev = bubble.dataset.rawMd || '';
+  const next = prev + text;
+  bubble.dataset.rawMd = next;
+  content.innerHTML = marked.parse(next);
+  scrollHistory();
+}
+
+function finalizeBubble(bubble) {
+  // If we never got a delta, leave a friendly placeholder instead of an
+  // empty bubble with dots stuck forever.
+  if (bubble.classList.contains('thinking')) {
+    bubble.classList.remove('thinking');
+    while (bubble.firstChild) bubble.removeChild(bubble.firstChild);
+    const content = document.createElement('div');
+    content.className = 'msg-content';
+    content.textContent = '(no response)';
+    bubble.appendChild(content);
+  }
+
+  if (bubble && !bubble.dataset.footerAdded) {
+    const footer = document.createElement('div');
+    footer.className = 'assistant-footer';
+    footer.textContent = 'AI output — verify independently.';
+    bubble.appendChild(footer);
+    bubble.dataset.footerAdded = '1';
+  }
+}
+```
+
+Note: `sidepanel.js` is currently loaded as `<script type="module" src="sidepanel.js">` in `sidepanel.html` (line 56). The new `import` statement at the top relies on this. Verify the script tag's `type="module"` is already in place (it is) — if not, add it. **No change to the HTML is required for the import to work.**
+
+- [ ] **Step 3: Add markdown-rendered CSS rules to `extension/sidepanel.css`**
+
+Append at the end of `sidepanel.css`:
+
+```css
+/* Markdown rendering inside assistant bubbles */
+.msg-content { line-height: 1.6; }
+.msg-content > :first-child { margin-top: 0; }
+.msg-content > :last-child { margin-bottom: 0; }
+.msg-content p { margin: 0 0 8px; }
+.msg-content h1,
+.msg-content h2,
+.msg-content h3,
+.msg-content h4 {
+  margin: 14px 0 6px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.msg-content h1 { font-size: 17px; }
+.msg-content h2 { font-size: 15px; }
+.msg-content h3 { font-size: 14px; }
+.msg-content h4 { font-size: 13px; color: var(--text-muted); }
+.msg-content ul,
+.msg-content ol {
+  margin: 4px 0 8px;
+  padding-left: 22px;
+}
+.msg-content li { margin: 2px 0; }
+.msg-content li > p { margin: 0 0 4px; }
+.msg-content blockquote {
+  margin: 6px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+}
+.msg-content a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.msg-content a:hover { color: var(--accent-strong); }
+.msg-content hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+.msg-content table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12px;
+}
+.msg-content th,
+.msg-content td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+}
+/* Slight bump on code fence font size for the rendered output */
+.msg-content pre code { font-size: 12.5px; }
+```
+
+- [ ] **Step 4: Update CHANGELOG.md**
+
+In the `### Added` section of `## [1.0.0]`, append after the Stop button bullet (from Task 12b):
+
+```markdown
+- Assistant responses now render as markdown (code fences, inline code, lists, headings, blockquotes) via vendored `marked@<version>` (MIT). Includes typography pass on the rendered output.
+```
+
+Replace `<version>` with the actual pinned marked version you installed (e.g. `15.0.7`).
+
+- [ ] **Step 5: Verify**
+
+```bash
+node --check extension/sidepanel.js
+npm test
+```
+
+Then a quick markdown rendering sanity check:
+
+```bash
+node --input-type=module -e "
+  import('./extension/lib/marked.esm.js').then(({ marked }) => {
+    const html = marked.parse('# Hello\\n\\n\`\`\`js\\nconst x = 1;\\n\`\`\`\\n- a\\n- b\\n');
+    console.log(html.includes('<h1') && html.includes('<pre') && html.includes('<ul') ? 'ok' : 'fail');
+  })
+"
+```
+
+Expected: prints `ok`.
+
+(Manual smoke of the rendered side panel deferred to Task 13.)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add extension/lib/marked.esm.js extension/sidepanel.js extension/sidepanel.css CHANGELOG.md
+git commit -m "$(cat <<'EOF'
+feat(extension): render assistant responses as markdown
+
+Assistant bubbles now contain a .msg-content child whose innerHTML is
+re-rendered from the raw markdown buffer on every delta via the
+vendored marked library (single ESM file, MIT). Code fences, inline
+code, headings, lists, blockquotes, bold/italic now render properly
+instead of leaking through as raw syntax. Adds typography rules
+(line-height, list/heading/blockquote spacing) so PR-review-length
+responses are actually scannable.
+
+The trailing AI-output footer is preserved across re-renders by living
+outside .msg-content as a sibling on the bubble.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
 ## Task 13: P1 — Self-verification before the public flip
 
 This is a manual checklist, not a code task. Walk through it once on a fresh-feeling environment.
