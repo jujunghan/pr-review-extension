@@ -18,47 +18,54 @@ const diffStatus = new Map();
 // prUrl set: whose diff has already been attached as the first user turn
 const diffAttached = new Set();
 
+let lastHostError = '';
+
+function routeIncoming(msg) {
+  console.log('[PR Review BG] port recv', msg.type, 'id=', msg.id,
+    msg.type === 'delta' ? `text.len=${msg.text?.length}` : '');
+  const handler = pending.get(msg.id);
+  if (!handler) {
+    console.warn('[PR Review BG] no handler for id', msg.id);
+    return;
+  }
+  if (msg.type === 'delta') handler.onDelta?.(msg.text);
+  else if (msg.type === 'done') { handler.onDone?.(msg.sessionId); pending.delete(msg.id); }
+  else if (msg.type === 'error') { handler.onError?.(msg.message); pending.delete(msg.id); }
+  else if (msg.type === 'ok') { handler.onDone?.(); pending.delete(msg.id); }
+}
+
+function handleDisconnect() {
+  const err = chrome.runtime.lastError?.message || 'Native host disconnected';
+  lastHostError = err;
+  console.warn('[PR Review BG] port disconnect:', err, 'pending=', pending.size);
+  const toRetry = [];
+  for (const [, handler] of pending) {
+    if (!handler._retried && !handler._sawDelta && handler._req) {
+      handler._retried = true;
+      toRetry.push(handler);
+    } else {
+      handler.onError?.(err);
+    }
+  }
+  pending.clear();
+  port = null;
+  broadcast({ type: 'hostStatus', status: 'missing', error: err });
+  for (const h of toRetry) {
+    nativeSend(h._req, h);
+  }
+}
+
 function ensurePort() {
   if (port) return port;
   try {
     port = chrome.runtime.connectNative(NATIVE_HOST);
   } catch (err) {
     port = null;
+    lastHostError = err?.message || 'connectNative threw';
     return null;
   }
-  port.onMessage.addListener((msg) => {
-    console.log('[PR Review BG] port recv', msg.type, 'id=', msg.id, msg.type === 'delta' ? `text.len=${msg.text?.length}` : '');
-    const handler = pending.get(msg.id);
-    if (!handler) {
-      console.warn('[PR Review BG] no handler for id', msg.id);
-      return;
-    }
-    if (msg.type === 'delta') handler.onDelta?.(msg.text);
-    else if (msg.type === 'done') { handler.onDone?.(msg.sessionId); pending.delete(msg.id); }
-    else if (msg.type === 'error') { handler.onError?.(msg.message); pending.delete(msg.id); }
-    else if (msg.type === 'ok') { handler.onDone?.(); pending.delete(msg.id); }
-  });
-  port.onDisconnect.addListener(() => {
-    const err = chrome.runtime.lastError?.message || 'Native host disconnected';
-    console.warn('[PR Review BG] port disconnect:', err, 'pending=', pending.size);
-    // Chrome may exit the host after idle. Any in-flight requests that
-    // haven't started receiving data yet are safe to retry once on a
-    // fresh port; ones already mid-stream surface the error to the user.
-    const toRetry = [];
-    for (const [, handler] of pending) {
-      if (!handler._retried && !handler._sawDelta && handler._req) {
-        handler._retried = true;
-        toRetry.push(handler);
-      } else {
-        handler.onError?.(err);
-      }
-    }
-    pending.clear();
-    port = null;
-    for (const h of toRetry) {
-      nativeSend(h._req, h);
-    }
-  });
+  port.onMessage.addListener(routeIncoming);
+  port.onDisconnect.addListener(handleDisconnect);
   return port;
 }
 
@@ -176,6 +183,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ path });
       return;
     }
+    if (msg.type === 'getHostStatus') {
+      sendResponse({ status: probeHostStatus() });
+      return;
+    }
     if (msg.type === 'setRepoPath') {
       const key = repoKey(msg.prUrl);
       if (!key) { sendResponse({ ok: false, error: 'invalid prUrl' }); return; }
@@ -252,4 +263,21 @@ function ingestDiff(prUrl, diff) {
     diffStatus.set(prUrl, { ready: true, bytes, lines });
   }
   broadcast({ type: 'diffStatus', prUrl, status: diffStatus.get(prUrl) });
+}
+
+// Returns 'ready' if we already hold a live port, 'probing' if we just
+// opened one (the side panel should re-poll on the upcoming hostStatus
+// broadcast), or 'missing' if connectNative threw. connectNative throws
+// synchronously only when the native host manifest is entirely absent;
+// connection failures surface later via the existing handleDisconnect.
+function probeHostStatus() {
+  if (port) return 'ready';
+  try {
+    port = chrome.runtime.connectNative(NATIVE_HOST);
+    port.onMessage.addListener(routeIncoming);
+    port.onDisconnect.addListener(handleDisconnect);
+    return 'probing';
+  } catch {
+    return 'missing';
+  }
 }
