@@ -19,9 +19,119 @@ const PASTE_PLACEHOLDER_RE = /\[Pasted text #(\d+) — \d+ lines\]/g;
 const pasteRegistry = new Map();
 let pasteCounter = 0;
 
+const FIRST_RUN_KEY = 'firstRunBannerDismissed';
+
+function showOnboarding(extId) {
+  const onboarding = document.getElementById('onboarding');
+  const emptyState = document.getElementById('empty-state');
+  if (!onboarding) return;
+  onboarding.hidden = false;
+  if (emptyState) emptyState.hidden = true;
+  renderOnboardingSnippets(extId);
+}
+
+function hideOnboarding() {
+  const onboarding = document.getElementById('onboarding');
+  const emptyState = document.getElementById('empty-state');
+  if (onboarding) onboarding.hidden = true;
+  if (emptyState) emptyState.hidden = false;
+}
+
+function renderOnboardingSnippets(extId) {
+  const displayId = extId || '<your extension id from chrome://extensions>';
+  const claudePrompt = [
+    'Install the pr-review-extension native host for me.',
+    '',
+    'Steps:',
+    '1. git clone https://github.com/jujunghan/pr-review-extension ~/pr-review-extension  (skip if already cloned)',
+    '2. cd ~/pr-review-extension && npm install',
+    `3. npm run install-host -- --ext-id ${displayId}`,
+    '4. Tell me to reload the PR Review extension in chrome://extensions when you\'re done.',
+  ].join('\n');
+
+  const shellSnippet = [
+    'git clone https://github.com/jujunghan/pr-review-extension ~/pr-review-extension',
+    'cd ~/pr-review-extension && npm install',
+    `npm run install-host -- --ext-id ${displayId}`,
+  ].join('\n');
+
+  document.getElementById('claude-prompt').textContent = claudePrompt;
+  document.getElementById('shell-snippet').textContent = shellSnippet;
+}
+
+function wireOnboardingControls() {
+  const tabClaude = document.getElementById('tab-claude');
+  const tabShell = document.getElementById('tab-shell');
+  const panelClaude = document.getElementById('panel-claude');
+  const panelShell = document.getElementById('panel-shell');
+
+  function selectTab(which) {
+    const claudeActive = which === 'claude';
+    tabClaude.classList.toggle('is-active', claudeActive);
+    tabShell.classList.toggle('is-active', !claudeActive);
+    tabClaude.setAttribute('aria-selected', claudeActive ? 'true' : 'false');
+    tabShell.setAttribute('aria-selected', !claudeActive ? 'true' : 'false');
+    panelClaude.hidden = !claudeActive;
+    panelShell.hidden = claudeActive;
+  }
+  tabClaude.addEventListener('click', () => selectTab('claude'));
+  tabShell.addEventListener('click', () => selectTab('shell'));
+
+  document.getElementById('copy-claude').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(document.getElementById('claude-prompt').textContent);
+    flashRetryStatus('Copied prompt');
+  });
+  document.getElementById('copy-shell').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(document.getElementById('shell-snippet').textContent);
+    flashRetryStatus('Copied commands');
+  });
+
+  document.getElementById('retry-host').addEventListener('click', async () => {
+    flashRetryStatus('Testing…');
+    const res = await chrome.runtime.sendMessage({ type: 'getHostStatus' });
+    if (res?.status === 'ready') {
+      hideOnboarding();
+      flashRetryStatus('Connected');
+    } else if (res?.status === 'probing') {
+      flashRetryStatus('Probing — give it a second, then click again');
+    } else {
+      flashRetryStatus('Still missing. Did you reload the extension?');
+    }
+  });
+}
+
+function flashRetryStatus(text) {
+  const el = document.getElementById('retry-status');
+  if (!el) return;
+  el.textContent = text;
+  clearTimeout(flashRetryStatus._t);
+  flashRetryStatus._t = setTimeout(() => { el.textContent = ''; }, 4000);
+}
+
+async function maybeShowFirstRunBanner() {
+  const store = await chrome.storage.local.get(FIRST_RUN_KEY);
+  if (store[FIRST_RUN_KEY]) return;
+  const banner = document.getElementById('first-run-banner');
+  if (!banner) return;
+  banner.hidden = false;
+  document.getElementById('banner-dismiss').addEventListener('click', async () => {
+    banner.hidden = true;
+    await chrome.storage.local.set({ [FIRST_RUN_KEY]: true });
+  });
+}
+
 init();
 
 async function init() {
+  wireOnboardingControls();
+
+  const hostRes = await chrome.runtime.sendMessage({ type: 'getHostStatus' });
+  if (hostRes?.status !== 'ready') {
+    showOnboarding(chrome.runtime.id);
+  } else {
+    await maybeShowFirstRunBanner();
+  }
+
   const state = await chrome.runtime.sendMessage({ type: 'getState' });
   setPrUrl(state?.prUrl || null);
   if (state?.prUrl) {
@@ -60,6 +170,14 @@ async function init() {
         setStatus(`Claude error: ${msg.error}`, { error: true });
         finalizeBubble(bubble);
         activeStreams.delete(msg.streamId);
+      }
+    }
+    if (msg.type === 'hostStatus') {
+      if (msg.status === 'missing') {
+        showOnboarding(chrome.runtime.id);
+      } else if (msg.status === 'ready') {
+        hideOnboarding();
+        maybeShowFirstRunBanner();
       }
     }
   });
